@@ -33,7 +33,8 @@ import {
   FaArrowDown, 
   FaArrowLeft,
   FaSave,
-  FaEdit
+  FaEdit,
+  FaChartBar
 } from 'react-icons/fa';
 
 function SortableComp({ id, children }) {
@@ -574,6 +575,14 @@ function OrcamentoEAP() {
                 onClick={fecharTodosPacotes}
               >
                 Fechar Todos
+              </Button>
+              <Button 
+                size="sm" 
+                variant="outline-info"
+                onClick={() => navigate(`/orcamentos/${orcamentoId}/curva-abc`)}
+              >
+                <FaChartBar className="me-2" />
+                Curva ABC
               </Button>
             </div>
           </div>

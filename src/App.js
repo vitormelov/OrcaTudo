@@ -10,6 +10,7 @@ import Insumos from './components/Insumos';
 import Composicoes from './components/Composicoes';
 import Orcamentos from './components/Orcamentos';
 import OrcamentoEAP from './components/OrcamentoEAP';
+import CurvaABC from './components/CurvaABC';
 import Login from './components/Login';
 import { AuthProvider } from './contexts/AuthContext';
 import PrivateRoute from './components/PrivateRoute';
@@ -46,6 +47,11 @@ function App() {
               <Route path="/orcamentos/:id/eap" element={
                 <PrivateRoute>
                   <OrcamentoEAP />
+                </PrivateRoute>
+              } />
+              <Route path="/orcamentos/:id/curva-abc" element={
+                <PrivateRoute>
+                  <CurvaABC />
                 </PrivateRoute>
               } />
             </Routes>
