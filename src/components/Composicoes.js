@@ -19,8 +19,7 @@ import {
   deleteDoc, 
   doc, 
   query, 
-  where,
-  orderBy 
+  where
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useAuth } from '../contexts/AuthContext';
@@ -46,6 +45,9 @@ function Composicoes() {
     insumoId: '',
     quantidade: ''
   });
+
+  const [insumoSearchTerm, setInsumoSearchTerm] = useState('');
+  const [showInsumoDropdown, setShowInsumoDropdown] = useState(false);
 
   const unidades = [
     'CJ',
@@ -82,6 +84,19 @@ function Composicoes() {
       fetchInsumos();
     }
   }, [currentUser]);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (!event.target.closest('.position-relative')) {
+        setShowInsumoDropdown(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
 
   const fetchComposicoes = async () => {
     try {
@@ -153,6 +168,13 @@ function Composicoes() {
         return;
       }
 
+      // Verificar se a composição tem pelo menos um insumo
+      if (!formData.insumos || formData.insumos.length === 0) {
+        setError('A composição deve ter pelo menos um insumo.');
+        setLoading(false);
+        return;
+      }
+
       const composicaoData = {
         nome: formData.nome.trim(),
         unidade: formData.unidade,
@@ -217,6 +239,8 @@ function Composicoes() {
       insumoId: '',
       quantidade: ''
     });
+    setInsumoSearchTerm('');
+    setShowInsumoDropdown(false);
   };
 
   const adicionarInsumo = () => {
@@ -226,7 +250,10 @@ function Composicoes() {
     }
 
     const insumo = insumos.find(i => i.id === novoInsumo.insumoId);
-    if (!insumo) return;
+    if (!insumo) {
+      setError('Selecione um insumo válido da lista');
+      return;
+    }
 
     const insumoComposicao = {
       insumoId: novoInsumo.insumoId,
@@ -242,6 +269,17 @@ function Composicoes() {
       insumoId: '',
       quantidade: ''
     });
+    setInsumoSearchTerm('');
+    setError(''); // Limpar erro anterior
+  };
+
+  const selecionarInsumo = (insumo) => {
+    setNovoInsumo({
+      ...novoInsumo,
+      insumoId: insumo.id
+    });
+    setInsumoSearchTerm(insumo.nome);
+    setShowInsumoDropdown(false);
   };
 
   const removerInsumo = (index) => {
@@ -259,19 +297,9 @@ function Composicoes() {
     (composicao.unidade || '').toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const valorTotalComposicao = (comp) => {
-    // Se tiver estrutura nova
-    if (Array.isArray(comp.insumos) && comp.insumos.length > 0 && comp.insumos[0].insumoId) {
-      return calcularValorTotalAtual(comp.insumos);
-    }
-    // fallback para antigas
-    if (typeof comp.valorTotal === 'number') return comp.valorTotal;
-    if (Array.isArray(comp.insumos)) {
-      const soma = comp.insumos.reduce((sum, i) => sum + (i.custoTotal || 0), 0);
-      return soma;
-    }
-    return 0;
-  };
+  const insumosFiltrados = insumos.filter(insumo =>
+    insumo.nome.toLowerCase().includes(insumoSearchTerm.toLowerCase())
+  );
 
   return (
     <div>
@@ -413,18 +441,45 @@ function Composicoes() {
                 <Row>
                   <Col md={4}>
                     <Form.Group className="mb-3">
-                      <Form.Label>Insumo *</Form.Label>
-                      <Form.Select
-                        value={novoInsumo.insumoId}
-                        onChange={(e) => setNovoInsumo({ ...novoInsumo, insumoId: e.target.value })}
-                      >
-                        <option value="">Selecione...</option>
-                        {insumos.map(insumo => (
-                          <option key={insumo.id} value={insumo.id}>
-                            {insumo.nome} ({insumo.unidade})
-                          </option>
-                        ))}
-                      </Form.Select>
+                      <Form.Label>Insumo</Form.Label>
+                      <div className="position-relative">
+                        <Form.Control
+                          type="text"
+                          placeholder="Digite para buscar insumo..."
+                          value={insumoSearchTerm}
+                          onChange={(e) => {
+                            setInsumoSearchTerm(e.target.value);
+                            setShowInsumoDropdown(true);
+                          }}
+                          onFocus={() => setShowInsumoDropdown(true)}
+                        />
+                        {showInsumoDropdown && insumoSearchTerm && (
+                          <div className="position-absolute w-100 bg-white border rounded shadow-sm" style={{zIndex: 1000, maxHeight: '200px', overflowY: 'auto'}}>
+                            {insumosFiltrados.length > 0 ? (
+                              insumosFiltrados.map(insumo => (
+                                <div
+                                  key={insumo.id}
+                                  className="p-2 border-bottom"
+                                  style={{
+                                    cursor: 'pointer',
+                                    transition: 'background-color 0.2s'
+                                  }}
+                                  onMouseEnter={(e) => e.target.style.backgroundColor = '#f8f9fa'}
+                                  onMouseLeave={(e) => e.target.style.backgroundColor = 'white'}
+                                  onMouseDown={() => selecionarInsumo(insumo)}
+                                >
+                                  <div className="fw-bold">{insumo.nome}</div>
+                                  <small className="text-muted">
+                                    {insumo.unidade} - R$ {insumo.precoUnitario?.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) || '0,00'}
+                                  </small>
+                                </div>
+                              ))
+                            ) : (
+                              <div className="p-2 text-muted">Nenhum insumo encontrado</div>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </Form.Group>
                   </Col>
                   <Col md={3}>

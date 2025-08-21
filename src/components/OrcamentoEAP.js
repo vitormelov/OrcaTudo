@@ -5,13 +5,10 @@ import {
   Modal, 
   Form, 
   Alert, 
-  Row, 
-  Col,
   ListGroup,
-  Badge,
-  InputGroup,
-  Accordion
+  Badge
 } from 'react-bootstrap';
+import { formatCurrency, formatCurrencyValue } from '../utils/formatters';
 import { 
   collection, 
   getDocs, 
@@ -62,6 +59,7 @@ function OrcamentoEAP() {
   
   const [orcamento, setOrcamento] = useState(null);
   const [composicoes, setComposicoes] = useState([]);
+  const [insumos, setInsumos] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   
@@ -86,10 +84,14 @@ function OrcamentoEAP() {
     subgrupoId: ''
   });
 
+  // Estado para controlar quais pacotes estão abertos
+  const [pacotesAbertos, setPacotesAbertos] = useState(new Set());
+
   useEffect(() => {
     if (currentUser && orcamentoId) {
       fetchOrcamento();
       fetchComposicoes();
+      fetchInsumos();
     }
   }, [currentUser, orcamentoId]);
 
@@ -128,6 +130,23 @@ function OrcamentoEAP() {
       setComposicoes(composicoesData);
     } catch (error) {
       console.error('Erro ao carregar composições:', error);
+    }
+  };
+
+  const fetchInsumos = async () => {
+    try {
+      const q = query(
+        collection(db, 'insumos'), 
+        where('userId', '==', currentUser.uid)
+      );
+      const querySnapshot = await getDocs(q);
+      const insumosData = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setInsumos(insumosData);
+    } catch (error) {
+      console.error('Erro ao carregar insumos:', error);
     }
   };
 
@@ -248,15 +267,13 @@ function OrcamentoEAP() {
   };
 
   const removerSubgrupo = (pacoteId, subgrupoId) => {
-    if (!window.confirm('Tem certeza que deseja remover este subgrupo? Todas as composições serão movidas para "Sem Subgrupo".')) return;
+    if (!window.confirm('Tem certeza que deseja remover este subgrupo? Todas as composições dentro dele também serão removidas.')) return;
     
-    // Mover composições para "Sem Subgrupo"
+    // Remover composições do subgrupo
     setOrcamento(prev => ({
       ...prev,
-      composicoes: (prev.composicoes || []).map(c => 
-        c.pacoteId === pacoteId && c.subgrupoId === subgrupoId 
-          ? { ...c, subgrupoId: 'sem_subgrupo' }
-          : c
+      composicoes: (prev.composicoes || []).filter(c => 
+        !(c.pacoteId === pacoteId && c.subgrupoId === subgrupoId)
       ),
       pacotes: (prev.pacotes || []).map(p => 
         p.id === pacoteId 
@@ -291,7 +308,7 @@ function OrcamentoEAP() {
 
   // Funções para gerenciar composições
   const adicionarComposicao = () => {
-    if (!novaComposicao.composicaoId || !novaComposicao.quantidade || !novaComposicao.custoUnitario || !novaComposicao.pacoteId) {
+    if (!novaComposicao.composicaoId || !novaComposicao.quantidade || !novaComposicao.custoUnitario || !novaComposicao.pacoteId || !novaComposicao.subgrupoId) {
       setError('Preencha todos os campos da composição');
       return;
     }
@@ -308,7 +325,7 @@ function OrcamentoEAP() {
       custoTotal: parseFloat(novaComposicao.quantidade) * parseFloat(novaComposicao.custoUnitario),
       insumos: composicao.insumos || [],
       pacoteId: novaComposicao.pacoteId,
-      subgrupoId: novaComposicao.subgrupoId || 'sem_subgrupo',
+      subgrupoId: novaComposicao.subgrupoId,
       ordem: 0,
       tempId: `${Date.now()}-${Math.random()}`
     };
@@ -333,30 +350,6 @@ function OrcamentoEAP() {
       ...prev,
       composicoes: (prev.composicoes || []).filter(c => c.tempId !== tempId)
     }));
-  };
-
-  const alterarPacoteDaComposicao = (tempId, novoPacoteId) => {
-    if (!novoPacoteId) return; // Não permitir pacote vazio
-    
-    setOrcamento(prev => {
-      const arr = [...(prev.composicoes || [])];
-      const idx = arr.findIndex(c => c.tempId === tempId);
-      if (idx === -1) return prev;
-      
-      arr[idx] = { ...arr[idx], pacoteId: novoPacoteId, subgrupoId: 'sem_subgrupo' };
-      return { ...prev, composicoes: arr };
-    });
-  };
-
-  const alterarSubgrupoDaComposicao = (tempId, novoSubgrupoId) => {
-    setOrcamento(prev => {
-      const arr = [...(prev.composicoes || [])];
-      const idx = arr.findIndex(c => c.tempId === tempId);
-      if (idx === -1) return prev;
-      
-      arr[idx] = { ...arr[idx], subgrupoId: novoSubgrupoId };
-      return { ...prev, composicoes: arr };
-    });
   };
 
   const onDragEndComps = (pacoteId, itens) => (event) => {
@@ -400,16 +393,86 @@ function OrcamentoEAP() {
       .reduce((sum, c) => sum + (c.custoTotal || 0), 0);
   };
 
-  const obterComposicoesDoPacote = (pacoteId) => {
-    return (orcamento?.composicoes || [])
-      .filter(c => c.pacoteId === pacoteId && !c.subgrupoId)
-      .sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
+  const calcularSubvaloresComposicao = (composicao) => {
+    const subvalores = {
+      'Material': 0,
+      'Mão de Obra': 0,
+      'Equipamento': 0,
+      'Serviço': 0
+    };
+    
+    // Buscar a composição original no array de composições
+    const composicaoOriginal = composicoes.find(c => c.id === composicao.composicaoId);
+    
+    if (composicaoOriginal && composicaoOriginal.insumos && Array.isArray(composicaoOriginal.insumos)) {
+      // Calcular baseado nos insumos reais da composição
+      composicaoOriginal.insumos.forEach(item => {
+        // Buscar o insumo pelo ID para obter a categoria e preço
+        const insumo = insumos.find(ins => ins.id === item.insumoId);
+        if (insumo) {
+          // Calcular o valor do insumo na composição
+          const valorInsumoNaComposicao = (parseFloat(item.quantidade) || 0) * (insumo.precoUnitario || 0);
+          
+          // Aplicar a categoria do insumo
+          const categoria = insumo.categoria || 'Material';
+          if (subvalores[categoria] !== undefined) {
+            subvalores[categoria] += valorInsumoNaComposicao;
+          } else {
+            subvalores['Material'] += valorInsumoNaComposicao;
+          }
+        }
+      });
+    }
+    
+    // Se não conseguiu calcular pelos insumos, distribuir o valor total
+    const totalCalculado = Object.values(subvalores).reduce((sum, val) => sum + val, 0);
+    if (totalCalculado === 0) {
+      // Usar distribuição padrão se não conseguir calcular pelos insumos
+      const valorTotal = composicao.custoTotal || 0;
+      subvalores['Material'] = valorTotal * 0.7;
+      subvalores['Mão de Obra'] = valorTotal * 0.2;
+      subvalores['Equipamento'] = valorTotal * 0.05;
+      subvalores['Serviço'] = valorTotal * 0.05;
+    }
+    
+    // Multiplicar todos os subvalores pela quantidade da composição no orçamento
+    const quantidade = parseFloat(composicao.quantidade) || 1;
+    Object.keys(subvalores).forEach(categoria => {
+      subvalores[categoria] = subvalores[categoria] * quantidade;
+    });
+    
+    return { subvalores, total: composicao.custoTotal || 0 };
   };
 
   const obterComposicoesDoSubgrupo = (pacoteId, subgrupoId) => {
     return (orcamento?.composicoes || [])
       .filter(c => c.pacoteId === pacoteId && c.subgrupoId === subgrupoId)
       .sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
+  };
+
+  const temSubgrupos = () => {
+    return (orcamento?.pacotes || []).some(p => p.subgrupos && p.subgrupos.length > 0);
+  };
+
+  const togglePacote = (pacoteId) => {
+    setPacotesAbertos(prev => {
+      const novo = new Set(prev);
+      if (novo.has(pacoteId)) {
+        novo.delete(pacoteId);
+      } else {
+        novo.add(pacoteId);
+      }
+      return novo;
+    });
+  };
+
+  const abrirTodosPacotes = () => {
+    const todosIds = (orcamento?.pacotes || []).map(p => p.id);
+    setPacotesAbertos(new Set(todosIds));
+  };
+
+  const fecharTodosPacotes = () => {
+    setPacotesAbertos(new Set());
   };
 
   const salvarEAP = async () => {
@@ -464,10 +527,19 @@ function OrcamentoEAP() {
             Criar Pacote
           </Button>
           <Button 
-            onClick={() => setShowModalComposicao(true)} 
-            variant="success"
+            onClick={() => setShowModalSubgrupo(true)} 
+            variant="info"
             disabled={todosPacotes.length === 0}
             title={todosPacotes.length === 0 ? "Crie um pacote primeiro" : ""}
+          >
+            <FaPlus className="me-2" />
+            Criar Subgrupo
+          </Button>
+          <Button 
+            onClick={() => setShowModalComposicao(true)} 
+            variant="success"
+            disabled={!temSubgrupos()}
+            title={!temSubgrupos() ? "Crie um subgrupo primeiro para adicionar composições" : ""}
           >
             <FaLayerGroup className="me-2" />
             Adicionar Composição
@@ -484,7 +556,27 @@ function OrcamentoEAP() {
       {/* EAP: Pacotes, Subgrupos e Composições */}
       <Card>
         <Card.Header>
-          <FaFolder className="me-2" /> Estrutura Analítica do Projeto (EAP)
+          <div className="d-flex justify-content-between align-items-center">
+            <div>
+              <FaFolder className="me-2" /> Estrutura Analítica do Projeto (EAP)
+            </div>
+            <div className="d-flex gap-2">
+              <Button 
+                size="sm" 
+                variant="outline-secondary"
+                onClick={abrirTodosPacotes}
+              >
+                Abrir Todos
+              </Button>
+              <Button 
+                size="sm" 
+                variant="outline-secondary"
+                onClick={fecharTodosPacotes}
+              >
+                Fechar Todos
+              </Button>
+            </div>
+          </div>
         </Card.Header>
         <Card.Body>
           {todosPacotes.length === 0 ? (
@@ -496,233 +588,180 @@ function OrcamentoEAP() {
               </Button>
             </div>
           ) : (
-            <Accordion>
+            <div>
               {todosPacotes.map((pacote, pIdx) => {
-                const itensSemSubgrupo = obterComposicoesDoPacote(pacote.id);
                 const subgrupos = (pacote.subgrupos || []).sort((a, b) => a.ordem - b.ordem);
+                const isAberto = pacotesAbertos.has(pacote.id);
                 
                 return (
-                  <Accordion.Item key={pacote.id} eventKey={pIdx.toString()}>
-                    <Accordion.Header>
-                      <div className="d-flex justify-content-between align-items-center w-100 me-3">
+                  <Card key={pacote.id} className="mb-3">
+                    <Card.Header 
+                      style={{cursor: 'pointer'}}
+                      onClick={() => togglePacote(pacote.id)}
+                      className="d-flex justify-content-between align-items-center"
+                    >
+                      <div className="d-flex align-items-center">
+                        <FaFolder className="me-2" />
                         <span>
                           <strong>{pacote.nome}</strong>
                           <Badge bg="secondary" className="ms-2">
-                            {subgrupos.length + (itensSemSubgrupo.length > 0 ? 1 : 0)} grupos
+                            {subgrupos.length} grupos
                           </Badge>
                         </span>
-                        <span className="d-flex align-items-center" style={{gap: '8px'}}>
-                          <Button 
-                            size="sm" 
-                            variant="outline-secondary" 
-                            onClick={(e) => { e.stopPropagation(); moverPacote(pacote.id, 'up'); }}
-                          >
-                            <FaArrowUp />
-                          </Button>
-                          <Button 
-                            size="sm" 
-                            variant="outline-secondary" 
-                            onClick={(e) => { e.stopPropagation(); moverPacote(pacote.id, 'down'); }}
-                          >
-                            <FaArrowDown />
-                          </Button>
-                          <Button 
-                            size="sm" 
-                            variant="outline-primary" 
-                            onClick={(e) => { 
-                              e.stopPropagation(); 
-                              setEditingPacote(pacote);
-                              setNovoPacoteNome(pacote.nome);
-                              setShowModalPacote(true);
-                            }}
-                          >
-                            <FaEdit />
-                          </Button>
-                          <Button 
-                            size="sm" 
-                            variant="outline-danger" 
-                            onClick={(e) => { e.stopPropagation(); removerPacote(pacote.id); }}
-                          >
-                            <FaTrash />
-                          </Button>
-                          <strong>R$ {totalDoPacote(pacote.id).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong>
-                        </span>
                       </div>
-                    </Accordion.Header>
-                    <Accordion.Body>
-                      {/* Botão para criar subgrupo */}
-                      <div className="mb-3">
+                      <div className="d-flex align-items-center" style={{gap: '8px'}}>
                         <Button 
                           size="sm" 
-                          variant="outline-info"
-                          onClick={() => {
-                            setPacoteParaSubgrupo(pacote);
-                            setShowModalSubgrupo(true);
+                          variant="outline-secondary" 
+                          onClick={(e) => { e.stopPropagation(); moverPacote(pacote.id, 'up'); }}
+                        >
+                          <FaArrowUp />
+                        </Button>
+                        <Button 
+                          size="sm" 
+                          variant="outline-secondary" 
+                          onClick={(e) => { e.stopPropagation(); moverPacote(pacote.id, 'down'); }}
+                        >
+                          <FaArrowDown />
+                        </Button>
+                        <Button 
+                          size="sm" 
+                          variant="outline-primary" 
+                          onClick={(e) => { 
+                            e.stopPropagation(); 
+                            setEditingPacote(pacote);
+                            setNovoPacoteNome(pacote.nome);
+                            setShowModalPacote(true);
                           }}
                         >
-                          <FaPlus className="me-1" /> Criar Subgrupo
+                          <FaEdit />
                         </Button>
+                        <Button 
+                          size="sm" 
+                          variant="outline-danger" 
+                          onClick={(e) => { e.stopPropagation(); removerPacote(pacote.id); }}
+                        >
+                          <FaTrash />
+                        </Button>
+                        <strong>{formatCurrency(totalDoPacote(pacote.id))}</strong>
                       </div>
-
-                      {/* Composições sem subgrupo */}
-                      {itensSemSubgrupo.length > 0 && (
-                        <div className="mb-3">
-                          <h6 className="text-muted mb-2">Sem Subgrupo</h6>
-                          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEndComps(pacote.id, itensSemSubgrupo)}>
-                            <SortableContext items={itensSemSubgrupo.map(i => i.tempId)} strategy={verticalListSortingStrategy}>
-                              <ListGroup>
-                                {itensSemSubgrupo.map((comp) => (
-                                  <SortableComp key={comp.tempId} id={comp.tempId}>
-                                    <ListGroup.Item className="d-flex justify-content-between align-items-center">
-                                      <div style={{width: '40%'}}>
-                                        <strong>{comp.nome}</strong>
-                                        <div className="text-muted" style={{fontSize: '0.85rem'}}>
-                                          {comp.quantidade} {comp.unidade} × R$ {comp.custoUnitario.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} = R$ {comp.custoTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                                        </div>
-                                      </div>
-                                      <div className="d-flex align-items-center" style={{gap: '6px'}}>
-                                        <Form.Select
-                                          size="sm"
-                                          value={comp.pacoteId}
-                                          onChange={(e) => alterarPacoteDaComposicao(comp.tempId, e.target.value)}
-                                          style={{width: '120px'}}
-                                        >
-                                          {todosPacotes.map(p => (
-                                            <option key={p.id} value={p.id}>{p.nome}</option>
-                                          ))}
-                                        </Form.Select>
-                                        <Form.Select
-                                          size="sm"
-                                          value={comp.subgrupoId || 'sem_subgrupo'}
-                                          onChange={(e) => alterarSubgrupoDaComposicao(comp.tempId, e.target.value)}
-                                          style={{width: '120px'}}
-                                        >
-                                          <option value="sem_subgrupo">Sem Subgrupo</option>
-                                          {subgrupos.map(s => (
-                                            <option key={s.id} value={s.id}>{s.nome}</option>
-                                          ))}
-                                        </Form.Select>
-                                        <Button size="sm" variant="outline-danger" onClick={() => removerComposicao(comp.tempId)}>
-                                          <FaTrash />
-                                        </Button>
-                                      </div>
-                                    </ListGroup.Item>
-                                  </SortableComp>
-                                ))}
-                              </ListGroup>
-                            </SortableContext>
-                          </DndContext>
-                        </div>
-                      )}
-
-                      {/* Subgrupos */}
-                      {subgrupos.map((subgrupo, sIdx) => {
-                        const itens = obterComposicoesDoSubgrupo(pacote.id, subgrupo.id);
-                        return (
-                          <div key={subgrupo.id} className="mb-3">
-                            <div className="d-flex justify-content-between align-items-center mb-2">
-                              <h6 className="mb-0">
-                                <strong>{subgrupo.nome}</strong>
-                                <Badge bg="info" className="ms-2">{itens.length} comp.</Badge>
-                              </h6>
-                              <div className="d-flex align-items-center" style={{gap: '6px'}}>
-                                <Button 
-                                  size="sm" 
-                                  variant="outline-secondary" 
-                                  onClick={() => moverSubgrupo(pacote.id, subgrupo.id, 'up')}
-                                >
-                                  <FaArrowUp />
-                                </Button>
-                                <Button 
-                                  size="sm" 
-                                  variant="outline-secondary" 
-                                  onClick={() => moverSubgrupo(pacote.id, subgrupo.id, 'down')}
-                                >
-                                  <FaArrowDown />
-                                </Button>
-                                <Button 
-                                  size="sm" 
-                                  variant="outline-primary" 
-                                  onClick={() => {
-                                    setEditingSubgrupo({...subgrupo, pacoteId: pacote.id});
-                                    setNovoSubgrupoNome(subgrupo.nome);
-                                    setShowModalSubgrupo(true);
-                                  }}
-                                >
-                                  <FaEdit />
-                                </Button>
-                                <Button 
-                                  size="sm" 
-                                  variant="outline-danger" 
-                                  onClick={() => removerSubgrupo(pacote.id, subgrupo.id)}
-                                >
-                                  <FaTrash />
-                                </Button>
-                                <strong className="text-info">
-                                  R$ {totalDoSubgrupo(pacote.id, subgrupo.id).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                                </strong>
+                    </Card.Header>
+                    
+                    {isAberto && (
+                      <Card.Body>
+                        {/* Subgrupos */}
+                        {subgrupos.map((subgrupo, sIdx) => {
+                          const itens = obterComposicoesDoSubgrupo(pacote.id, subgrupo.id);
+                          return (
+                            <div key={subgrupo.id} className="mb-3">
+                              <div className="d-flex justify-content-between align-items-center mb-2">
+                                <h6 className="mb-0">
+                                  <strong>{subgrupo.nome}</strong>
+                                  <Badge bg="info" className="ms-2">{itens.length} comp.</Badge>
+                                </h6>
+                                <div className="d-flex align-items-center" style={{gap: '6px'}}>
+                                  <Button 
+                                    size="sm" 
+                                    variant="outline-secondary" 
+                                    onClick={() => moverSubgrupo(pacote.id, subgrupo.id, 'up')}
+                                  >
+                                    <FaArrowUp />
+                                  </Button>
+                                  <Button 
+                                    size="sm" 
+                                    variant="outline-secondary" 
+                                    onClick={() => moverSubgrupo(pacote.id, subgrupo.id, 'down')}
+                                  >
+                                    <FaArrowDown />
+                                  </Button>
+                                  <Button 
+                                    size="sm" 
+                                    variant="outline-primary" 
+                                    onClick={() => {
+                                      setEditingSubgrupo({...subgrupo, pacoteId: pacote.id});
+                                      setNovoSubgrupoNome(subgrupo.nome);
+                                      setShowModalSubgrupo(true);
+                                    }}
+                                  >
+                                    <FaEdit />
+                                  </Button>
+                                  <Button 
+                                    size="sm" 
+                                    variant="outline-danger" 
+                                    onClick={() => removerSubgrupo(pacote.id, subgrupo.id)}
+                                  >
+                                    <FaTrash />
+                                  </Button>
+                                  <strong className="text-info">
+                                    {formatCurrency(totalDoSubgrupo(pacote.id, subgrupo.id))}
+                                  </strong>
+                                </div>
                               </div>
+                              
+                              {itens.length === 0 ? (
+                                <div className="text-muted ms-3">Sem composições neste subgrupo.</div>
+                              ) : (
+                                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEndComps(pacote.id, itens)}>
+                                  <SortableContext items={itens.map(i => i.tempId)} strategy={verticalListSortingStrategy}>
+                                    <ListGroup>
+                                      {itens.map((comp) => {
+                                        const { subvalores, total } = calcularSubvaloresComposicao(comp);
+                                        return (
+                                          <SortableComp key={comp.tempId} id={comp.tempId}>
+                                            <ListGroup.Item>
+                                              <div className="d-flex justify-content-between align-items-center mb-2">
+                                                <div style={{width: '30%'}}>
+                                                  <strong>{comp.nome}</strong>
+                                                                                                  <div className="text-muted" style={{fontSize: '0.85rem'}}>
+                                                  {comp.quantidade} {comp.unidade} × {formatCurrency(comp.custoUnitario)} = {formatCurrency(comp.custoTotal)}
+                                                </div>
+                                                </div>
+                                                <div className="d-flex align-items-center" style={{gap: '12px'}}>
+                                                  <div className="text-center">
+                                                    <small className="text-muted d-block">Material</small>
+                                                    <strong className="text-primary">{formatCurrency(subvalores.Material)}</strong>
+                                                  </div>
+                                                  <div className="text-center">
+                                                    <small className="text-muted d-block">Mão de Obra</small>
+                                                    <strong className="text-success">{formatCurrency(subvalores['Mão de Obra'])}</strong>
+                                                  </div>
+                                                  <div className="text-center">
+                                                    <small className="text-muted d-block">Equipamento</small>
+                                                    <strong className="text-warning">{formatCurrency(subvalores.Equipamento)}</strong>
+                                                  </div>
+                                                  <div className="text-center">
+                                                    <small className="text-muted d-block">Serviço</small>
+                                                    <strong className="text-info">{formatCurrency(subvalores.Serviço)}</strong>
+                                                  </div>
+                                                  <div className="text-center ms-3 ps-3 border-start">
+                                                    <small className="text-muted d-block">Total</small>
+                                                    <strong className="text-dark fs-6">{formatCurrency(total)}</strong>
+                                                  </div>
+                                                  <Button size="sm" variant="outline-danger" onClick={() => removerComposicao(comp.tempId)}>
+                                                    <FaTrash />
+                                                  </Button>
+                                                </div>
+                                              </div>
+                                            </ListGroup.Item>
+                                          </SortableComp>
+                                        );
+                                      })}
+                                    </ListGroup>
+                                  </SortableContext>
+                                </DndContext>
+                              )}
                             </div>
-                            
-                            {itens.length === 0 ? (
-                              <div className="text-muted ms-3">Sem composições neste subgrupo.</div>
-                            ) : (
-                              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEndComps(pacote.id, itens)}>
-                                <SortableContext items={itens.map(i => i.tempId)} strategy={verticalListSortingStrategy}>
-                                  <ListGroup>
-                                    {itens.map((comp) => (
-                                      <SortableComp key={comp.tempId} id={comp.tempId}>
-                                        <ListGroup.Item className="d-flex justify-content-between align-items-center">
-                                          <div style={{width: '40%'}}>
-                                            <strong>{comp.nome}</strong>
-                                            <div className="text-muted" style={{fontSize: '0.85rem'}}>
-                                              {comp.quantidade} {comp.unidade} × R$ {comp.custoUnitario.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} = R$ {comp.custoTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                                            </div>
-                                          </div>
-                                          <div className="d-flex align-items-center" style={{gap: '6px'}}>
-                                            <Form.Select
-                                              size="sm"
-                                              value={comp.pacoteId}
-                                              onChange={(e) => alterarPacoteDaComposicao(comp.tempId, e.target.value)}
-                                              style={{width: '120px'}}
-                                            >
-                                              {todosPacotes.map(p => (
-                                                <option key={p.id} value={p.id}>{p.nome}</option>
-                                              ))}
-                                            </Form.Select>
-                                            <Form.Select
-                                              size="sm"
-                                              value={comp.subgrupoId || 'sem_subgrupo'}
-                                              onChange={(e) => alterarSubgrupoDaComposicao(comp.tempId, e.target.value)}
-                                              style={{width: '120px'}}
-                                            >
-                                              <option value="sem_subgrupo">Sem Subgrupo</option>
-                                              {subgrupos.map(s => (
-                                                <option key={s.id} value={s.id}>{s.nome}</option>
-                                              ))}
-                                            </Form.Select>
-                                            <Button size="sm" variant="outline-danger" onClick={() => removerComposicao(comp.tempId)}>
-                                              <FaTrash />
-                                            </Button>
-                                          </div>
-                                        </ListGroup.Item>
-                                      </SortableComp>
-                                    ))}
-                                  </ListGroup>
-                                </SortableContext>
-                              </DndContext>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </Accordion.Body>
-                  </Accordion.Item>
+                          );
+                        })}
+                      </Card.Body>
+                    )}
+                  </Card>
                 );
               })}
-            </Accordion>
+            </div>
           )}
           <div className="text-end mt-3">
-            <h5>Valor Total: R$ {calcularValorTotal().toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</h5>
+                            <h5>Valor Total: {formatCurrency(calcularValorTotal())}</h5>
           </div>
         </Card.Body>
       </Card>
@@ -781,6 +820,23 @@ function OrcamentoEAP() {
           </Modal.Title>
         </Modal.Header>
         <Modal.Body>
+          {!editingSubgrupo && (
+            <Form.Group className="mb-3">
+              <Form.Label>Pacote de Destino *</Form.Label>
+              <Form.Select
+                value={pacoteParaSubgrupo?.id || ''}
+                onChange={(e) => {
+                  const pacote = todosPacotes.find(p => p.id === e.target.value);
+                  setPacoteParaSubgrupo(pacote);
+                }}
+              >
+                <option value="">Selecione um pacote...</option>
+                {todosPacotes.map(pacote => (
+                  <option key={pacote.id} value={pacote.id}>{pacote.nome}</option>
+                ))}
+              </Form.Select>
+            </Form.Group>
+          )}
           <Form.Group>
             <Form.Label>Nome do Subgrupo *</Form.Label>
             <Form.Control
@@ -804,7 +860,7 @@ function OrcamentoEAP() {
           <Button 
             variant="primary" 
             onClick={editingSubgrupo ? editarSubgrupo : criarSubgrupo}
-            disabled={!novoSubgrupoNome.trim()}
+            disabled={!novoSubgrupoNome.trim() || (!editingSubgrupo && !pacoteParaSubgrupo)}
           >
             {editingSubgrupo ? 'Atualizar' : 'Criar'}
           </Button>
@@ -885,13 +941,13 @@ function OrcamentoEAP() {
           </Form.Group>
 
           <Form.Group className="mb-3">
-            <Form.Label>Subgrupo (Opcional)</Form.Label>
+            <Form.Label>Subgrupo *</Form.Label>
             <Form.Select
               value={novaComposicao.subgrupoId}
               onChange={(e) => setNovaComposicao({...novaComposicao, subgrupoId: e.target.value})}
               disabled={!novaComposicao.pacoteId}
             >
-              <option value="">Sem Subgrupo</option>
+              <option value="">Selecione um subgrupo...</option>
               {novaComposicao.pacoteId && todosPacotes.find(p => p.id === novaComposicao.pacoteId)?.subgrupos?.map(subgrupo => (
                 <option key={subgrupo.id} value={subgrupo.id}>{subgrupo.nome}</option>
               ))}
@@ -914,7 +970,7 @@ function OrcamentoEAP() {
           <Button 
             variant="primary" 
             onClick={adicionarComposicao}
-            disabled={!novaComposicao.composicaoId || !novaComposicao.quantidade || !novaComposicao.custoUnitario || !novaComposicao.pacoteId}
+            disabled={!novaComposicao.composicaoId || !novaComposicao.quantidade || !novaComposicao.custoUnitario || !novaComposicao.pacoteId || !novaComposicao.subgrupoId}
           >
             Adicionar Composição
           </Button>
