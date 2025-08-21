@@ -1,0 +1,37 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Regras para insumos
+    // Coleção principal de insumos
+    match /insumos/{document} {
+      // Criar: compara com request.resource (doc ainda não existe)
+      allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
+      // Ler/atualizar/excluir: compara com resource (doc existente)
+      allow read, update, delete: if request.auth != null && request.auth.uid == resource.data.userId;
+    }
+    // Subcoleção de preços dos insumos
+    match /insumos/{insumoId}/precos/{precoId} {
+      allow read, write: if request.auth != null &&
+        request.auth.uid == get(/databases/$(database)/documents/insumos/$(insumoId)).data.userId;
+    }
+    
+    // Regras para composições
+    match /composicoes/{document} {
+      allow read, write: if request.auth != null && 
+        (request.auth.uid == resource.data.userId || 
+         request.auth.uid == request.resource.data.userId);
+    }
+    
+    // Regras para orçamentos
+    match /orcamentos/{document} {
+      allow read, write: if request.auth != null && 
+        (request.auth.uid == resource.data.userId || 
+         request.auth.uid == request.resource.data.userId);
+    }
+    
+    // Regra padrão - negar acesso a todas as outras coleções
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

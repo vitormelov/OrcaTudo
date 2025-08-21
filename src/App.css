@@ -1,0 +1,83 @@
+.App {
+  min-height: 100vh;
+  background-color: #f8f9fa;
+}
+
+.navbar-brand {
+  font-weight: bold;
+  color: #007bff !important;
+}
+
+.card {
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  border: none;
+  border-radius: 8px;
+}
+
+.card-header {
+  background-color: #007bff;
+  color: white;
+  border-radius: 8px 8px 0 0 !important;
+  font-weight: bold;
+}
+
+.btn-primary {
+  background-color: #007bff;
+  border-color: #007bff;
+}
+
+.btn-primary:hover {
+  background-color: #0056b3;
+  border-color: #0056b3;
+}
+
+.table th {
+  background-color: #f8f9fa;
+  border-top: none;
+}
+
+.form-control:focus {
+  border-color: #007bff;
+  box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+}
+
+.alert {
+  border-radius: 8px;
+}
+
+.modal-content {
+  border-radius: 8px;
+}
+
+.modal-header {
+  background-color: #007bff;
+  color: white;
+  border-radius: 8px 8px 0 0;
+}
+
+.dashboard-card {
+  transition: transform 0.2s;
+}
+
+.dashboard-card:hover {
+  transform: translateY(-2px);
+}
+
+.stats-card {
+  background: linear-gradient(135deg, #007bff, #0056b3);
+  color: white;
+}
+
+.stats-card .card-body {
+  padding: 1.5rem;
+}
+
+.stats-number {
+  font-size: 2rem;
+  font-weight: bold;
+}
+
+.stats-label {
+  font-size: 0.9rem;
+  opacity: 0.9;
+}
