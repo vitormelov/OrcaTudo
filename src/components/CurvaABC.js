@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Card, Table, Badge, Alert, Spinner, Button } from 'react-bootstrap';
-import { FaChartBar, FaExclamationTriangle, FaInfoCircle, FaCheckCircle, FaArrowLeft } from 'react-icons/fa';
+import { FaChartBar, FaExclamationTriangle, FaInfoCircle, FaCheckCircle, FaArrowLeft, FaFilePdf } from 'react-icons/fa';
 import { formatCurrency } from '../utils/formatters';
 import { collection, getDocs, query, where, getDoc, doc } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
@@ -252,6 +252,65 @@ const CurvaABC = () => {
     }
   };
 
+  const exportarPDF = () => {
+    // Importação dinâmica para evitar problemas de SSR
+    import('jspdf').then(({ default: jsPDF }) => {
+      import('jspdf-autotable').then(({ default: autoTable }) => {
+        const doc = new jsPDF();
+        
+        // Título
+        doc.setFontSize(20);
+        doc.text(`Curva ABC - ${orcamentoNome}`, 14, 22);
+        
+        // Data de geração
+        doc.setFontSize(12);
+        doc.text(`Gerado em: ${new Date().toLocaleDateString('pt-BR')}`, 14, 32);
+        
+        // Resumo
+        doc.setFontSize(14);
+        doc.text('Resumo por Categoria:', 14, 45);
+        
+        doc.setFontSize(10);
+        doc.text(`Categoria A: ${resumo.categoriaA.quantidade} insumos - ${formatCurrency(resumo.categoriaA.valor)} (${resumo.categoriaA.percentual}%)`, 14, 55);
+        doc.text(`Categoria B: ${resumo.categoriaB.quantidade} insumos - ${formatCurrency(resumo.categoriaB.valor)} (${resumo.categoriaB.percentual}%)`, 14, 62);
+        doc.text(`Categoria C: ${resumo.categoriaC.quantidade} insumos - ${formatCurrency(resumo.categoriaC.valor)} (${resumo.categoriaC.percentual}%)`, 14, 69);
+        doc.text(`Total: ${resumo.totalInsumos} insumos - ${formatCurrency(resumo.valorTotal)}`, 14, 76);
+        
+        // Tabela de insumos
+        const tableData = curvaABC.map((item, index) => [
+          index + 1,
+          item.nome,
+          item.categoria,
+          item.quantidade.toFixed(2),
+          formatCurrency(item.precoUnitario),
+          formatCurrency(item.valorTotal),
+          `${item.percentualValor}%`,
+          `${item.percentualAcumulado}%`,
+          item.categoriaABC
+        ]);
+        
+        autoTable(doc, {
+          head: [['#', 'Insumo', 'Categoria', 'Quantidade', 'Preço Unit.', 'Valor Total', '% Total', '% Acumulado', 'ABC']],
+          body: tableData,
+          startY: 85,
+          styles: {
+            fontSize: 8,
+            cellPadding: 2
+          },
+          headStyles: {
+            fillColor: [66, 139, 202],
+            textColor: 255
+          }
+        });
+        
+        // Salvar PDF
+        doc.save(`CurvaABC_${orcamentoNome}_${new Date().toISOString().split('T')[0]}.pdf`);
+      });
+    });
+  };
+
+
+
   if (loading) {
     return (
       <div className="text-center p-4">
@@ -281,13 +340,24 @@ const CurvaABC = () => {
               <FaChartBar className="me-2" />
               Curva ABC - {orcamentoNome}
             </h4>
-            <Button 
-              variant="outline-secondary" 
-              onClick={() => navigate(`/orcamentos/${orcamentoId}/eap`)}
-            >
-              <FaArrowLeft className="me-2" />
-              Voltar para EAP
-            </Button>
+            <div className="d-flex gap-2">
+              <Button 
+                variant="outline-danger" 
+                onClick={exportarPDF}
+                disabled={curvaABC.length === 0}
+                title="Exportar para PDF"
+              >
+                <FaFilePdf className="me-2" />
+                Exportar PDF
+              </Button>
+              <Button 
+                variant="outline-secondary" 
+                onClick={() => navigate(`/orcamentos/${orcamentoId}/eap`)}
+              >
+                <FaArrowLeft className="me-2" />
+                Voltar para EAP
+              </Button>
+            </div>
           </div>
         </Card.Header>
         <Card.Body>
