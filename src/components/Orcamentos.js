@@ -170,6 +170,27 @@ function Orcamentos() {
     return date.toLocaleDateString('pt-BR');
   };
 
+  const formatarUltimaAtualizacao = (ultimaAtualizacaoEAP) => {
+    if (!ultimaAtualizacaoEAP) return 'Nunca atualizado';
+    
+    const data = new Date(ultimaAtualizacaoEAP);
+    const agora = new Date();
+    const diffMs = agora - data;
+    const diffDias = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    const diffHoras = Math.floor(diffMs / (1000 * 60 * 60));
+    const diffMinutos = Math.floor(diffMs / (1000 * 60));
+    
+    if (diffDias > 0) {
+      return `${diffDias} dia${diffDias > 1 ? 's' : ''} atrás`;
+    } else if (diffHoras > 0) {
+      return `${diffHoras} hora${diffHoras > 1 ? 's' : ''} atrás`;
+    } else if (diffMinutos > 0) {
+      return `${diffMinutos} minuto${diffMinutos > 1 ? 's' : ''} atrás`;
+    } else {
+      return 'Agora mesmo';
+    }
+  };
+
   return (
     <div>
       <div className="d-flex justify-content-between align-items-center mb-4">
@@ -222,7 +243,7 @@ function Orcamentos() {
                   <th>Nome</th>
                   <th>Cliente</th>
                   <th>Data</th>
-                  <th>Composições</th>
+                  <th>Última atualização</th>
                   <th>Valor Total</th>
                   <th>Status</th>
                   <th>Ações</th>
@@ -234,7 +255,7 @@ function Orcamentos() {
                     <td><strong>{orcamento.nome}</strong></td>
                     <td>{orcamento.cliente}</td>
                     <td>{formatarData(orcamento.data)}</td>
-                    <td>{orcamento.composicoes?.length || 0} composições</td>
+                    <td>{formatarUltimaAtualizacao(orcamento.ultimaAtualizacaoEAP)}</td>
                     <td>R$ {orcamento.valorTotal?.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) || '0,00'}</td>
                     <td>
                       <Badge bg={getStatusColor(orcamento.status)}>

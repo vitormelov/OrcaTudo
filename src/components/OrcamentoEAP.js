@@ -6,9 +6,12 @@ import {
   Form, 
   Alert, 
   ListGroup,
-  Badge
+  Badge,
+  Dropdown
 } from 'react-bootstrap';
 import { formatCurrency, formatCurrencyValue } from '../utils/formatters';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { 
   collection, 
   getDocs, 
@@ -34,8 +37,44 @@ import {
   FaArrowLeft,
   FaSave,
   FaEdit,
-  FaChartBar
+  FaChartBar,
+  FaFilePdf,
+  FaCalculator
 } from 'react-icons/fa';
+
+// Função para formatar data de forma amigável
+const formatarDataAmigavel = (dataISO) => {
+  if (!dataISO) return '';
+  
+  const data = new Date(dataISO);
+  const agora = new Date();
+  const diffMs = agora - data;
+  const diffDias = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  const diffHoras = Math.floor(diffMs / (1000 * 60 * 60));
+  const diffMinutos = Math.floor(diffMs / (1000 * 60));
+  
+  if (diffDias > 0) {
+    return `${diffDias} dia${diffDias > 1 ? 's' : ''} atrás`;
+  } else if (diffHoras > 0) {
+    return `${diffHoras} hora${diffHoras > 1 ? 's' : ''} atrás`;
+  } else if (diffMinutos > 0) {
+    return `${diffMinutos} minuto${diffMinutos > 1 ? 's' : ''} atrás`;
+  } else {
+    return 'Agora mesmo';
+  }
+};
+
+// Função para obter a cor do status
+const getStatusColor = (status) => {
+  const colors = {
+    'Em Análise': 'warning',
+    'Aprovado': 'success',
+    'Rejeitado': 'danger',
+    'Em Execução': 'info',
+    'Concluído': 'primary'
+  };
+  return colors[status] || 'secondary';
+};
 
 function SortableComp({ id, children }) {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id });
@@ -77,12 +116,19 @@ function OrcamentoEAP() {
   
   // Estados para adição de composições
   const [showModalComposicao, setShowModalComposicao] = useState(false);
+  const [showModalBDI, setShowModalBDI] = useState(false);
   const [novaComposicao, setNovaComposicao] = useState({
     composicaoId: '',
     quantidade: '',
     custoUnitario: '',
     pacoteId: '',
     subgrupoId: ''
+  });
+  const [bdiConfig, setBdiConfig] = useState({
+    lucro: 20,
+    tributos: 35,
+    financeiro: 5,
+    garantias: 2
   });
 
   // Estado para controlar quais pacotes estão abertos
@@ -382,6 +428,28 @@ function OrcamentoEAP() {
     return (orcamento?.composicoes || []).reduce((total, composicao) => total + composicao.custoTotal, 0);
   };
 
+  const calcularBDI = () => {
+    const lucro = bdiConfig.lucro / 100;
+    const tributos = bdiConfig.tributos / 100;
+    const financeiro = bdiConfig.financeiro / 100;
+    const garantias = bdiConfig.garantias / 100;
+    
+    const bdi = (1 + lucro) * (1 + tributos) * (1 + financeiro) * (1 + garantias) - 1;
+    return bdi * 100; // Retorna em porcentagem
+  };
+
+  const calcularValorBDI = () => {
+    const valorTotal = calcularValorTotal();
+    const bdi = calcularBDI() / 100;
+    return valorTotal * bdi;
+  };
+
+  const calcularValorTotalComBDI = () => {
+    const valorTotal = calcularValorTotal();
+    const valorBDI = calcularValorBDI();
+    return valorTotal + valorBDI;
+  };
+
   const totalDoPacote = (pacoteId) => {
     return (orcamento?.composicoes || [])
       .filter(c => c.pacoteId === pacoteId)
@@ -445,6 +513,12 @@ function OrcamentoEAP() {
     return { subvalores, total: composicao.custoTotal || 0 };
   };
 
+  const obterComposicoesDoPacote = (pacoteId) => {
+    return (orcamento?.composicoes || [])
+      .filter(c => c.pacoteId === pacoteId)
+      .sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
+  };
+
   const obterComposicoesDoSubgrupo = (pacoteId, subgrupoId) => {
     return (orcamento?.composicoes || [])
       .filter(c => c.pacoteId === pacoteId && c.subgrupoId === subgrupoId)
@@ -485,10 +559,18 @@ function OrcamentoEAP() {
       const orcamentoData = {
         ...orcamento,
         composicoes: composicoesSanitizadas,
-        valorTotal: calcularValorTotal()
+        valorTotal: calcularValorTotal(),
+        ultimaAtualizacaoEAP: new Date().toISOString()
       };
 
       await updateDoc(doc(db, 'orcamentos', orcamentoId), orcamentoData);
+      
+      // Atualizar o estado local com a nova data
+      setOrcamento(prev => ({
+        ...prev,
+        ultimaAtualizacaoEAP: orcamentoData.ultimaAtualizacaoEAP
+      }));
+      
       setError('');
       alert('EAP salva com sucesso!');
     } catch (error) {
@@ -497,6 +579,183 @@ function OrcamentoEAP() {
     }
 
     setLoading(false);
+  };
+
+  const atualizarStatus = async (novoStatus) => {
+    setLoading(true);
+    setError('');
+
+    try {
+      const orcamentoData = {
+        status: novoStatus
+      };
+
+      await updateDoc(doc(db, 'orcamentos', orcamentoId), orcamentoData);
+      
+      // Atualizar o estado local
+      setOrcamento(prev => ({
+        ...prev,
+        status: novoStatus
+      }));
+      
+      setError('');
+      alert(`Status alterado para "${novoStatus}" com sucesso!`);
+    } catch (error) {
+      setError('Erro ao atualizar status');
+      console.error(error);
+    }
+
+    setLoading(false);
+  };
+
+  const exportarEAPPdf = () => {
+    if (!orcamento) return;
+
+    try {
+      const doc = new jsPDF();
+      const pageWidth = doc.internal.pageSize.width;
+      const margin = 20;
+      let yPosition = 20;
+
+      const todosPacotes = (orcamento.pacotes || []).sort((a, b) => a.ordem - b.ordem);
+
+      // Cabeçalho
+      doc.setFontSize(20);
+      doc.setFont('helvetica', 'bold');
+      doc.text('Estrutura Analítica do Projeto (EAP)', pageWidth / 2, yPosition, { align: 'center' });
+      yPosition += 20;
+
+      // Informações do orçamento
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Projeto: ${orcamento.nome}`, margin, yPosition);
+      yPosition += 10;
+      doc.text(`Cliente: ${orcamento.cliente}`, margin, yPosition);
+      yPosition += 10;
+      doc.text(`Data: ${new Date(orcamento.data).toLocaleDateString('pt-BR')}`, margin, yPosition);
+      yPosition += 10;
+      doc.text(`Status: ${orcamento.status || 'Em Análise'}`, margin, yPosition);
+      yPosition += 10;
+      if (orcamento.ultimaAtualizacaoEAP) {
+        doc.text(`Última atualização: ${formatarDataAmigavel(orcamento.ultimaAtualizacaoEAP)}`, margin, yPosition);
+        yPosition += 10;
+      }
+      yPosition += 15;
+
+      // Tabela de composições
+      const composicoesData = [];
+      const valorTotal = calcularValorTotal();
+
+      todosPacotes.forEach((pacote) => {
+        const subgrupos = (pacote.subgrupos || []).sort((a, b) => a.ordem - b.ordem);
+        
+        subgrupos.forEach((subgrupo) => {
+          const itens = obterComposicoesDoSubgrupo(pacote.id, subgrupo.id);
+          
+          itens.forEach((comp) => {
+            const { subvalores, total } = calcularSubvaloresComposicao(comp);
+            const porcentagem = valorTotal > 0 ? ((total / valorTotal) * 100).toFixed(1) : '0.0';
+            
+            composicoesData.push([
+              `${pacote.nome} > ${subgrupo.nome}`,
+              comp.nome,
+              `${comp.quantidade} ${comp.unidade}`,
+              formatCurrency(subvalores.Material),
+              formatCurrency(subvalores['Mão de Obra']),
+              formatCurrency(subvalores.Equipamento),
+              formatCurrency(subvalores.Serviço),
+              formatCurrency(total),
+              `${porcentagem}%`
+            ]);
+          });
+        });
+      });
+
+      // Cabeçalhos da tabela
+      const headers = [
+        'Pacote/Subgrupo',
+        'Composição',
+        'Quantidade',
+        'Material',
+        'Mão de Obra',
+        'Equipamento',
+        'Serviço',
+        'Total',
+        '%'
+      ];
+
+      // Configurações da tabela
+      const tableConfig = {
+        head: [headers],
+        body: composicoesData,
+        startY: yPosition,
+        margin: { left: margin, right: margin },
+        styles: {
+          fontSize: 8,
+          cellPadding: 2
+        },
+        headStyles: {
+          fillColor: [66, 139, 202],
+          textColor: 255,
+          fontStyle: 'bold'
+        },
+        alternateRowStyles: {
+          fillColor: [245, 245, 245]
+        },
+        columnStyles: {
+          0: { cellWidth: 35 }, // Pacote/Subgrupo
+          1: { cellWidth: 35 }, // Composição
+          2: { cellWidth: 20 }, // Quantidade
+          3: { cellWidth: 20 }, // Material
+          4: { cellWidth: 20 }, // Mão de Obra
+          5: { cellWidth: 20 }, // Equipamento
+          6: { cellWidth: 20 }, // Serviço
+          7: { cellWidth: 20 }, // Total
+          8: { cellWidth: 15 }  // %
+        }
+      };
+
+      // Gerar tabela
+      autoTable(doc, tableConfig);
+
+      // Resumo por pacote
+      let resumoY = yPosition + (composicoesData.length * 8) + 30;
+      
+      if (resumoY > doc.internal.pageSize.height - 40) {
+        doc.addPage();
+        resumoY = 20;
+      }
+
+      doc.setFontSize(14);
+      doc.setFont('helvetica', 'bold');
+      doc.text('Resumo por Pacote', margin, resumoY);
+      resumoY += 15;
+
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'normal');
+
+      todosPacotes.forEach((pacote) => {
+        const totalPacote = totalDoPacote(pacote.id);
+        const porcentagemPacote = valorTotal > 0 ? ((totalPacote / valorTotal) * 100).toFixed(1) : '0.0';
+        
+        doc.text(`${pacote.nome}: ${formatCurrency(totalPacote)} (${porcentagemPacote}%)`, margin, resumoY);
+        resumoY += 8;
+      });
+
+      // Valor total
+      resumoY += 10;
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'bold');
+      doc.text(`Valor Total: ${formatCurrency(valorTotal)}`, margin, resumoY);
+
+      // Salvar o PDF
+      const fileName = `EAP_${orcamento.nome.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`;
+      doc.save(fileName);
+
+    } catch (error) {
+      console.error('Erro ao gerar PDF:', error);
+      alert('Erro ao gerar PDF. Verifique o console para mais detalhes.');
+    }
   };
 
   if (!orcamento) {
@@ -521,6 +780,37 @@ function OrcamentoEAP() {
           <p className="text-muted">
             Cliente: {orcamento.cliente} | Data: {new Date(orcamento.data).toLocaleDateString('pt-BR')}
           </p>
+          {orcamento.ultimaAtualizacaoEAP && (
+            <p className="text-muted mb-2">
+              Última atualização: {formatarDataAmigavel(orcamento.ultimaAtualizacaoEAP)}
+            </p>
+          )}
+          <div className="d-flex align-items-center gap-2">
+            <span className="text-muted">Status:</span>
+            <Dropdown>
+              <Dropdown.Toggle 
+                variant={getStatusColor(orcamento.status)} 
+                size="sm"
+                disabled={loading}
+              >
+                {orcamento.status || 'Em Análise'}
+              </Dropdown.Toggle>
+              <Dropdown.Menu>
+                <Dropdown.Item 
+                  onClick={() => atualizarStatus('Em Análise')}
+                  active={orcamento.status === 'Em Análise'}
+                >
+                  Em Análise
+                </Dropdown.Item>
+                <Dropdown.Item 
+                  onClick={() => atualizarStatus('Concluído')}
+                  active={orcamento.status === 'Concluído'}
+                >
+                  Concluído
+                </Dropdown.Item>
+              </Dropdown.Menu>
+            </Dropdown>
+          </div>
         </div>
         <div className="d-flex gap-2">
           <Button onClick={() => setShowModalPacote(true)} variant="primary">
@@ -544,6 +834,14 @@ function OrcamentoEAP() {
           >
             <FaLayerGroup className="me-2" />
             Adicionar Composição
+          </Button>
+          <Button onClick={() => setShowModalBDI(true)} variant="info">
+            <FaCalculator className="me-2" />
+            BDI
+          </Button>
+          <Button onClick={exportarEAPPdf} variant="secondary">
+            <FaFilePdf className="me-2" />
+            Exportar PDF
           </Button>
           <Button onClick={salvarEAP} variant="warning" disabled={loading}>
             <FaSave className="me-2" />
@@ -614,7 +912,7 @@ function OrcamentoEAP() {
                         <span>
                           <strong>{pacote.nome}</strong>
                           <Badge bg="secondary" className="ms-2">
-                            {subgrupos.length} grupos
+                            {obterComposicoesDoPacote(pacote.id).length} comp.
                           </Badge>
                         </span>
                       </div>
@@ -652,7 +950,20 @@ function OrcamentoEAP() {
                         >
                           <FaTrash />
                         </Button>
-                        <strong>{formatCurrency(totalDoPacote(pacote.id))}</strong>
+                        <div className="text-end">
+                          <div className="fw-bold">{formatCurrency(totalDoPacote(pacote.id))}</div>
+                          <small className="text-secondary">
+                            {(() => {
+                              const valorTotal = calcularValorTotal();
+                              const totalPacote = totalDoPacote(pacote.id);
+                              if (valorTotal > 0) {
+                                const porcentagem = (totalPacote / valorTotal) * 100;
+                                return porcentagem < 0.1 ? '<0.1' : porcentagem.toFixed(1);
+                              }
+                              return '0.0';
+                            })()}%
+                          </small>
+                        </div>
                       </div>
                     </Card.Header>
                     
@@ -701,51 +1012,115 @@ function OrcamentoEAP() {
                                   >
                                     <FaTrash />
                                   </Button>
-                                  <strong className="text-info">
-                                    {formatCurrency(totalDoSubgrupo(pacote.id, subgrupo.id))}
-                                  </strong>
+                                  <div className="text-end">
+                                    <div className="fw-bold text-info">
+                                      {formatCurrency(totalDoSubgrupo(pacote.id, subgrupo.id))}
+                                    </div>
+                                    <small className="text-secondary">
+                                      {(() => {
+                                        const valorTotal = calcularValorTotal();
+                                        const totalSubgrupo = totalDoSubgrupo(pacote.id, subgrupo.id);
+                                        if (valorTotal > 0) {
+                                          const porcentagem = (totalSubgrupo / valorTotal) * 100;
+                                          return porcentagem < 0.1 ? '<0.1' : porcentagem.toFixed(1);
+                                        }
+                                        return '0.0';
+                                      })()}%
+                                    </small>
+                                  </div>
                                 </div>
                               </div>
                               
                               {itens.length === 0 ? (
                                 <div className="text-muted ms-3">Sem composições neste subgrupo.</div>
                               ) : (
-                                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEndComps(pacote.id, itens)}>
-                                  <SortableContext items={itens.map(i => i.tempId)} strategy={verticalListSortingStrategy}>
-                                    <ListGroup>
+                                <div>
+                                  {/* Cabeçalho das colunas */}
+                                  <div className="row bg-light py-2 mb-2 rounded">
+                                    <div className="col-5">
+                                      <small className="text-muted fw-bold">COMPOSIÇÃO</small>
+                                    </div>
+                                    <div className="col-1 text-center">
+                                      <small className="text-muted fw-bold">MATERIAL</small>
+                                    </div>
+                                    <div className="col-1 text-center">
+                                      <small className="text-muted fw-bold">M.O.</small>
+                                    </div>
+                                    <div className="col-1 text-center">
+                                      <small className="text-muted fw-bold">EQUIP.</small>
+                                    </div>
+                                    <div className="col-1 text-center">
+                                      <small className="text-muted fw-bold">SERVIÇO</small>
+                                    </div>
+                                    <div className="col-1 text-center">
+                                      <small className="text-muted fw-bold">TOTAL</small>
+                                    </div>
+                                    <div className="col-1 text-center">
+                                      <small className="text-muted fw-bold">%</small>
+                                    </div>
+                                    <div className="col-1 text-center">
+                                      <small className="text-muted fw-bold">AÇÕES</small>
+                                    </div>
+                                  </div>
+                                  
+                                  <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEndComps(pacote.id, itens)}>
+                                    <SortableContext items={itens.map(i => i.tempId)} strategy={verticalListSortingStrategy}>
+                                      <ListGroup>
                                       {itens.map((comp) => {
                                         const { subvalores, total } = calcularSubvaloresComposicao(comp);
                                         return (
                                           <SortableComp key={comp.tempId} id={comp.tempId}>
-                                            <ListGroup.Item>
-                                              <div className="d-flex justify-content-between align-items-center mb-2">
-                                                <div style={{width: '30%'}}>
-                                                  <strong>{comp.nome}</strong>
-                                                                                                  <div className="text-muted" style={{fontSize: '0.85rem'}}>
-                                                  {comp.quantidade} {comp.unidade} × {formatCurrency(comp.custoUnitario)} = {formatCurrency(comp.custoTotal)}
+                                            <ListGroup.Item style={{ borderLeft: 'none', borderRight: 'none' }}>
+                                              <div className="row align-items-center py-1">
+                                                {/* Nome da Composição - 50% */}
+                                                <div className="col-5">
+                                                  <strong className="d-block">{comp.nome}</strong>
+                                                  <div className="text-muted" style={{fontSize: '0.85rem'}}>
+                                                    {comp.quantidade} {comp.unidade} × {formatCurrency(comp.custoUnitario)} = {formatCurrency(comp.custoTotal)}
+                                                  </div>
                                                 </div>
+                                                
+                                                {/* Material - 10% */}
+                                                <div className="col-1 text-center border-start">
+                                                  <strong className="text-primary d-block">{formatCurrency(subvalores.Material)}</strong>
                                                 </div>
-                                                <div className="d-flex align-items-center" style={{gap: '12px'}}>
-                                                  <div className="text-center">
-                                                    <small className="text-muted d-block">Material</small>
-                                                    <strong className="text-primary">{formatCurrency(subvalores.Material)}</strong>
-                                                  </div>
-                                                  <div className="text-center">
-                                                    <small className="text-muted d-block">Mão de Obra</small>
-                                                    <strong className="text-success">{formatCurrency(subvalores['Mão de Obra'])}</strong>
-                                                  </div>
-                                                  <div className="text-center">
-                                                    <small className="text-muted d-block">Equipamento</small>
-                                                    <strong className="text-warning">{formatCurrency(subvalores.Equipamento)}</strong>
-                                                  </div>
-                                                  <div className="text-center">
-                                                    <small className="text-muted d-block">Serviço</small>
-                                                    <strong className="text-info">{formatCurrency(subvalores.Serviço)}</strong>
-                                                  </div>
-                                                  <div className="text-center ms-3 ps-3 border-start">
-                                                    <small className="text-muted d-block">Total</small>
-                                                    <strong className="text-dark fs-6">{formatCurrency(total)}</strong>
-                                                  </div>
+                                                
+                                                {/* Mão de Obra - 10% */}
+                                                <div className="col-1 text-center border-start">
+                                                  <strong className="text-success d-block">{formatCurrency(subvalores['Mão de Obra'])}</strong>
+                                                </div>
+                                                
+                                                {/* Equipamento - 10% */}
+                                                <div className="col-1 text-center border-start">
+                                                  <strong className="text-warning d-block">{formatCurrency(subvalores.Equipamento)}</strong>
+                                                </div>
+                                                
+                                                {/* Serviço - 10% */}
+                                                <div className="col-1 text-center border-start">
+                                                  <strong className="text-info d-block">{formatCurrency(subvalores.Serviço)}</strong>
+                                                </div>
+                                                
+                                                {/* Total - 10% */}
+                                                <div className="col-1 text-center border-start">
+                                                  <strong className="text-dark fs-6 d-block">{formatCurrency(total)}</strong>
+                                                </div>
+                                                
+                                                {/* Porcentagem - 5% */}
+                                                <div className="col-1 text-center border-start">
+                                                  <strong className="text-secondary d-block">
+                                                    {(() => {
+                                                      const valorTotal = calcularValorTotal();
+                                                      if (valorTotal > 0) {
+                                                        const porcentagem = (total / valorTotal) * 100;
+                                                        return porcentagem < 0.1 ? '<0.1' : porcentagem.toFixed(1);
+                                                      }
+                                                      return '0.0';
+                                                    })()}%
+                                                  </strong>
+                                                </div>
+                                                
+                                                {/* Botão Deletar - 5% */}
+                                                <div className="col-1 text-center border-start">
                                                   <Button size="sm" variant="outline-danger" onClick={() => removerComposicao(comp.tempId)}>
                                                     <FaTrash />
                                                   </Button>
@@ -755,9 +1130,10 @@ function OrcamentoEAP() {
                                           </SortableComp>
                                         );
                                       })}
-                                    </ListGroup>
-                                  </SortableContext>
-                                </DndContext>
+                                      </ListGroup>
+                                    </SortableContext>
+                                  </DndContext>
+                                </div>
                               )}
                             </div>
                           );
@@ -770,7 +1146,13 @@ function OrcamentoEAP() {
             </div>
           )}
           <div className="text-end mt-3">
-                            <h5>Valor Total: {formatCurrency(calcularValorTotal())}</h5>
+            <div className="row justify-content-end">
+              <div className="col-auto">
+                <h5 className="mb-2">Valor Total: {formatCurrency(calcularValorTotal())}</h5>
+                <h6 className="text-info mb-2">BDI ({calcularBDI().toFixed(1)}%): {formatCurrency(calcularValorBDI())}</h6>
+                <h4 className="text-success">Total com BDI: {formatCurrency(calcularValorTotalComBDI())}</h4>
+              </div>
+            </div>
           </div>
         </Card.Body>
       </Card>
@@ -982,6 +1364,138 @@ function OrcamentoEAP() {
             disabled={!novaComposicao.composicaoId || !novaComposicao.quantidade || !novaComposicao.custoUnitario || !novaComposicao.pacoteId || !novaComposicao.subgrupoId}
           >
             Adicionar Composição
+          </Button>
+        </Modal.Footer>
+      </Modal>
+
+      {/* Modal para Configurar BDI */}
+      <Modal show={showModalBDI} onHide={() => setShowModalBDI(false)} size="lg">
+        <Modal.Header closeButton>
+          <Modal.Title>
+            <FaCalculator className="me-2" />
+            Configurar BDI (Benefícios e Despesas Indiretas)
+          </Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <div className="row">
+            <div className="col-md-6">
+              <h6 className="mb-3">Parâmetros do BDI</h6>
+              
+              <Form.Group className="mb-3">
+                <Form.Label>Lucro (%)</Form.Label>
+                <Form.Control
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  max="100"
+                  value={bdiConfig.lucro}
+                  onChange={(e) => setBdiConfig({...bdiConfig, lucro: parseFloat(e.target.value) || 0})}
+                />
+              </Form.Group>
+
+              <Form.Group className="mb-3">
+                <Form.Label>Tributos (%)</Form.Label>
+                <Form.Control
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  max="100"
+                  value={bdiConfig.tributos}
+                  onChange={(e) => setBdiConfig({...bdiConfig, tributos: parseFloat(e.target.value) || 0})}
+                />
+              </Form.Group>
+
+              <Form.Group className="mb-3">
+                <Form.Label>Financeiro (%)</Form.Label>
+                <Form.Control
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  max="100"
+                  value={bdiConfig.financeiro}
+                  onChange={(e) => setBdiConfig({...bdiConfig, financeiro: parseFloat(e.target.value) || 0})}
+                />
+              </Form.Group>
+
+              <Form.Group className="mb-3">
+                <Form.Label>Garantias (%)</Form.Label>
+                <Form.Control
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  max="100"
+                  value={bdiConfig.garantias}
+                  onChange={(e) => setBdiConfig({...bdiConfig, garantias: parseFloat(e.target.value) || 0})}
+                />
+              </Form.Group>
+            </div>
+
+            <div className="col-md-6">
+              <h6 className="mb-3">Resultados</h6>
+              
+              <div className="card bg-light p-3">
+                <div className="row mb-2">
+                  <div className="col-6">
+                    <strong>Valor Total da EAP:</strong>
+                  </div>
+                  <div className="col-6 text-end">
+                    {formatCurrency(calcularValorTotal())}
+                  </div>
+                </div>
+                
+                <div className="row mb-2">
+                  <div className="col-6">
+                    <strong>BDI Calculado:</strong>
+                  </div>
+                  <div className="col-6 text-end text-info">
+                    {calcularBDI().toFixed(1)}%
+                  </div>
+                </div>
+                
+                <div className="row mb-2">
+                  <div className="col-6">
+                    <strong>Valor do BDI:</strong>
+                  </div>
+                  <div className="col-6 text-end text-info">
+                    {formatCurrency(calcularValorBDI())}
+                  </div>
+                </div>
+                
+                <div className="row">
+                  <div className="col-6">
+                    <strong>Total com BDI:</strong>
+                  </div>
+                  <div className="col-6 text-end text-success">
+                    <strong>{formatCurrency(calcularValorTotalComBDI())}</strong>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-3">
+                <h6>Fórmula Aplicada:</h6>
+                <small className="text-muted">
+                  BDI = (1 + {bdiConfig.lucro/100}) × (1 + {bdiConfig.tributos/100}) × (1 + {bdiConfig.financeiro/100}) × (1 + {bdiConfig.garantias/100}) - 1
+                </small>
+                <br />
+                <small className="text-muted">
+                  BDI = {((1 + bdiConfig.lucro/100) * (1 + bdiConfig.tributos/100) * (1 + bdiConfig.financeiro/100) * (1 + bdiConfig.garantias/100) - 1).toFixed(4)} = {calcularBDI().toFixed(1)}%
+                </small>
+              </div>
+            </div>
+          </div>
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={() => setShowModalBDI(false)}>
+            Fechar
+          </Button>
+          <Button 
+            variant="primary" 
+            onClick={() => {
+              // Aqui você pode salvar as configurações de BDI se necessário
+              setShowModalBDI(false);
+            }}
+          >
+            Aplicar BDI
           </Button>
         </Modal.Footer>
       </Modal>
