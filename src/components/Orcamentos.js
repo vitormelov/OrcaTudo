@@ -191,6 +191,41 @@ function Orcamentos() {
     }
   };
 
+  // Função para calcular o valor total com BDI aplicado
+  const calcularValorTotalComBDI = (orcamento) => {
+    if (!orcamento.valorTotal || orcamento.valorTotal === 0) return 0;
+    
+    // Se não há configuração de BDI, retorna o valor original
+    if (!orcamento.bdiConfig) return orcamento.valorTotal;
+    
+    const { lucro, tributos, financeiro, garantias } = orcamento.bdiConfig;
+    
+    // Fórmula do BDI: (1 + lucro) × (1 + tributos) × (1 + financeiro) × (1 + garantias) - 1
+    const bdi = (1 + lucro/100) * (1 + tributos/100) * (1 + financeiro/100) * (1 + garantias/100) - 1;
+    
+    // Valor total com BDI aplicado
+    return orcamento.valorTotal * (1 + bdi);
+  };
+
+  // Função para formatar o valor com informações do BDI
+  const formatarValorComBDI = (orcamento) => {
+    if (!orcamento.valorTotal || orcamento.valorTotal === 0) return 'R$ 0,00';
+    
+    const valorComBDI = calcularValorTotalComBDI(orcamento);
+    
+    if (!orcamento.bdiConfig) {
+      return `R$ ${orcamento.valorTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+    }
+    
+    const bdiPercentual = ((1 + orcamento.bdiConfig.lucro/100) * (1 + orcamento.bdiConfig.tributos/100) * (1 + orcamento.bdiConfig.financeiro/100) * (1 + orcamento.bdiConfig.garantias/100) - 1) * 100;
+    
+    return {
+      valorComBDI: valorComBDI,
+      valorBase: orcamento.valorTotal,
+      bdiPercentual: bdiPercentual
+    };
+  };
+
   return (
     <div>
       <div className="d-flex justify-content-between align-items-center mb-4">
@@ -244,7 +279,7 @@ function Orcamentos() {
                   <th>Cliente</th>
                   <th>Data</th>
                   <th>Última atualização</th>
-                  <th>Valor Total</th>
+                  <th>Valor Total (c/ BDI)</th>
                   <th>Status</th>
                   <th>Ações</th>
                 </tr>
@@ -256,7 +291,29 @@ function Orcamentos() {
                     <td>{orcamento.cliente}</td>
                     <td>{formatarData(orcamento.data)}</td>
                     <td>{formatarUltimaAtualizacao(orcamento.ultimaAtualizacaoEAP)}</td>
-                    <td>R$ {orcamento.valorTotal?.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) || '0,00'}</td>
+                    <td>
+                      {(() => {
+                        const valorFormatado = formatarValorComBDI(orcamento);
+                        if (typeof valorFormatado === 'string') {
+                          return <div className="fw-bold">{valorFormatado}</div>;
+                        }
+                        return (
+                          <div>
+                            <div className="fw-bold text-success">
+                              R$ {valorFormatado.valorComBDI.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            </div>
+                            <small className="text-muted">
+                              Base: R$ {valorFormatado.valorBase.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            </small>
+                            <br />
+                            <small className="text-success">
+                              <span className="badge bg-success me-1">BDI</span>
+                              +{valorFormatado.bdiPercentual.toFixed(1)}%
+                            </small>
+                          </div>
+                        );
+                      })()}
+                    </td>
                     <td>
                       <Badge bg={getStatusColor(orcamento.status)}>
                         {orcamento.status}

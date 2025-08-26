@@ -153,6 +153,11 @@ function OrcamentoEAP() {
           return;
         }
         setOrcamento({ id: docSnap.id, ...data });
+        
+        // Carregar configurações do BDI se existirem
+        if (data.bdiConfig) {
+          setBdiConfig(data.bdiConfig);
+        }
       } else {
         navigate('/orcamentos');
       }
@@ -560,15 +565,17 @@ function OrcamentoEAP() {
         ...orcamento,
         composicoes: composicoesSanitizadas,
         valorTotal: calcularValorTotal(),
-        ultimaAtualizacaoEAP: new Date().toISOString()
+        ultimaAtualizacaoEAP: new Date().toISOString(),
+        bdiConfig: bdiConfig // Salvar as configurações do BDI
       };
 
       await updateDoc(doc(db, 'orcamentos', orcamentoId), orcamentoData);
       
-      // Atualizar o estado local com a nova data
+      // Atualizar o estado local com a nova data e BDI
       setOrcamento(prev => ({
         ...prev,
-        ultimaAtualizacaoEAP: orcamentoData.ultimaAtualizacaoEAP
+        ultimaAtualizacaoEAP: orcamentoData.ultimaAtualizacaoEAP,
+        bdiConfig: bdiConfig
       }));
       
       setError('');
@@ -835,9 +842,13 @@ function OrcamentoEAP() {
             <FaLayerGroup className="me-2" />
             Adicionar Composição
           </Button>
-          <Button onClick={() => setShowModalBDI(true)} variant="info">
+          <Button 
+            onClick={() => setShowModalBDI(true)} 
+            variant={orcamento.bdiConfig ? "success" : "info"}
+            title={orcamento.bdiConfig ? "BDI aplicado - Clique para editar" : "Configurar BDI"}
+          >
             <FaCalculator className="me-2" />
-            BDI
+            BDI {orcamento.bdiConfig && <span className="badge bg-light text-dark ms-1">✓</span>}
           </Button>
           <Button onClick={exportarEAPPdf} variant="secondary">
             <FaFilePdf className="me-2" />
@@ -1149,8 +1160,19 @@ function OrcamentoEAP() {
             <div className="row justify-content-end">
               <div className="col-auto">
                 <h5 className="mb-2">Valor Total: {formatCurrency(calcularValorTotal())}</h5>
-                <h6 className="text-info mb-2">BDI ({calcularBDI().toFixed(1)}%): {formatCurrency(calcularValorBDI())}</h6>
-                <h4 className="text-success">Total com BDI: {formatCurrency(calcularValorTotalComBDI())}</h4>
+                {orcamento.bdiConfig ? (
+                  <>
+                    <h6 className="text-info mb-2">
+                      BDI ({calcularBDI().toFixed(1)}%): {formatCurrency(calcularValorBDI())}
+                      <span className="badge bg-success ms-2">Aplicado</span>
+                    </h6>
+                    <h4 className="text-success">Total com BDI: {formatCurrency(calcularValorTotalComBDI())}</h4>
+                  </>
+                ) : (
+                  <h6 className="text-muted mb-2">
+                    BDI não configurado - Clique no botão BDI para configurar
+                  </h6>
+                )}
               </div>
             </div>
           </div>
@@ -1374,6 +1396,9 @@ function OrcamentoEAP() {
           <Modal.Title>
             <FaCalculator className="me-2" />
             Configurar BDI (Benefícios e Despesas Indiretas)
+            {orcamento.bdiConfig && (
+              <span className="badge bg-success ms-2">Aplicado</span>
+            )}
           </Modal.Title>
         </Modal.Header>
         <Modal.Body>
@@ -1428,6 +1453,23 @@ function OrcamentoEAP() {
                   onChange={(e) => setBdiConfig({...bdiConfig, garantias: parseFloat(e.target.value) || 0})}
                 />
               </Form.Group>
+              
+              <div className="text-center mt-3">
+                <Button 
+                  variant="outline-secondary" 
+                  size="sm"
+                  onClick={() => {
+                    setBdiConfig({
+                      lucro: 20,
+                      tributos: 35,
+                      financeiro: 5,
+                      garantias: 2
+                    });
+                  }}
+                >
+                  Resetar para Valores Padrão
+                </Button>
+              </div>
             </div>
 
             <div className="col-md-6">
@@ -1488,11 +1530,34 @@ function OrcamentoEAP() {
           <Button variant="secondary" onClick={() => setShowModalBDI(false)}>
             Fechar
           </Button>
+          {orcamento.bdiConfig && (
+            <Button 
+              variant="danger" 
+              onClick={() => {
+                if (window.confirm('Tem certeza que deseja remover o BDI aplicado?')) {
+                  setBdiConfig({ lucro: 0, tributos: 0, financeiro: 0, garantias: 0 });
+                  setOrcamento(prev => ({
+                    ...prev,
+                    bdiConfig: null
+                  }));
+                  setShowModalBDI(false);
+                  alert('BDI removido com sucesso! Clique em "Salvar EAP" para persistir as alterações.');
+                }
+              }}
+            >
+              Remover BDI
+            </Button>
+          )}
           <Button 
             variant="primary" 
             onClick={() => {
-              // Aqui você pode salvar as configurações de BDI se necessário
+              // Salvar as configurações do BDI no estado local
+              setOrcamento(prev => ({
+                ...prev,
+                bdiConfig: bdiConfig
+              }));
               setShowModalBDI(false);
+              alert('BDI aplicado com sucesso! Clique em "Salvar EAP" para persistir as alterações.');
             }}
           >
             Aplicar BDI

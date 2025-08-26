@@ -20,7 +20,8 @@ function Dashboard() {
     insumos: 0,
     composicoes: 0,
     orcamentos: 0,
-    valorTotal: 0
+    valorTotal: 0,
+    valorTotalComBDI: 0
   });
 
   useEffect(() => {
@@ -38,17 +39,30 @@ function Dashboard() {
         const orcamentosQuery = query(collection(db, 'orcamentos'), where('userId', '==', currentUser.uid));
         const orcamentosSnapshot = await getDocs(orcamentosQuery);
         
-        // Calcular valor total dos orçamentos
+        // Calcular valor total dos orçamentos (com BDI se aplicável)
         let valorTotal = 0;
+        let valorTotalComBDI = 0;
         orcamentosSnapshot.forEach(doc => {
-          valorTotal += doc.data().valorTotal || 0;
+          const orcamento = doc.data();
+          const valorBase = orcamento.valorTotal || 0;
+          valorTotal += valorBase;
+          
+          // Calcular valor com BDI se configurado
+          if (orcamento.bdiConfig) {
+            const { lucro, tributos, financeiro, garantias } = orcamento.bdiConfig;
+            const bdi = (1 + lucro/100) * (1 + tributos/100) * (1 + financeiro/100) * (1 + garantias/100) - 1;
+            valorTotalComBDI += valorBase * (1 + bdi);
+          } else {
+            valorTotalComBDI += valorBase;
+          }
         });
 
         setStats({
           insumos: insumosSnapshot.size,
           composicoes: composicoesSnapshot.size,
           orcamentos: orcamentosSnapshot.size,
-          valorTotal: valorTotal
+          valorTotal: valorTotal,
+          valorTotalComBDI: valorTotalComBDI
         });
       } catch (error) {
         console.error('Erro ao buscar estatísticas:', error);
@@ -109,9 +123,9 @@ function Dashboard() {
             <Card.Body className="text-center">
               <FaDollarSign size={32} className="mb-2" />
               <div className="stats-number">
-                R$ {stats.valorTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                R$ {stats.valorTotalComBDI.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
               </div>
-              <div className="stats-label">Valor Total</div>
+              <div className="stats-label">Valor Total (c/ BDI)</div>
             </Card.Body>
           </Card>
         </Col>
