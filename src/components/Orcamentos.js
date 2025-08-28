@@ -24,7 +24,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useAuth } from '../contexts/AuthContext';
-import { FaPlus, FaEdit, FaTrash, FaSearch, FaFileInvoiceDollar, FaEye } from 'react-icons/fa';
+import { FaPlus, FaEdit, FaTrash, FaSearch, FaFileInvoiceDollar, FaEye, FaCopy } from 'react-icons/fa';
 import { useNavigate } from 'react-router-dom';
 
 function Orcamentos() {
@@ -32,12 +32,22 @@ function Orcamentos() {
   const navigate = useNavigate();
   const [orcamentos, setOrcamentos] = useState([]);
   const [showModal, setShowModal] = useState(false);
+  const [showCopyModal, setShowCopyModal] = useState(false);
   const [editingOrcamento, setEditingOrcamento] = useState(null);
+  const [orcamentoParaCopiar, setOrcamentoParaCopiar] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   
   const [formData, setFormData] = useState({
+    nome: '',
+    descricao: '',
+    cliente: '',
+    endereco: '',
+    data: ''
+  });
+
+  const [copyFormData, setCopyFormData] = useState({
     nome: '',
     descricao: '',
     cliente: '',
@@ -147,6 +157,174 @@ function Orcamentos() {
     });
   };
 
+  const resetCopyForm = () => {
+    setCopyFormData({
+      nome: '',
+      descricao: '',
+      cliente: '',
+      endereco: '',
+      data: ''
+    });
+  };
+
+  const handleCopyOrcamento = (orcamento) => {
+    setOrcamentoParaCopiar(orcamento);
+    setCopyFormData({
+      nome: `${orcamento.nome} - Cópia`,
+      descricao: orcamento.descricao || '',
+      cliente: orcamento.cliente || '',
+      endereco: orcamento.endereco || '',
+      data: new Date().toISOString().split('T')[0]
+    });
+    setShowCopyModal(true);
+  };
+
+  const handleSubmitCopy = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+
+    try {
+      // Buscar o orçamento original completo para copiar
+      const orcamentoOriginal = orcamentos.find(o => o.id === orcamentoParaCopiar.id);
+      
+      if (!orcamentoOriginal) {
+        throw new Error('Orçamento original não encontrado');
+      }
+
+      console.log('Orçamento original:', orcamentoOriginal);
+      console.log('Pacotes originais:', orcamentoOriginal.pacotes);
+
+      // Função para copiar profundamente a estrutura da EAP
+      const copiarEAPCompleta = (pacotes, composicoesOriginais) => {
+        if (!pacotes || pacotes.length === 0) {
+          console.log('Nenhum pacote para copiar');
+          return [];
+        }
+        
+        console.log('Copiando pacotes:', pacotes);
+        console.log('Composições originais disponíveis:', composicoesOriginais);
+        
+        // Criar mapeamento de IDs antigos para novos
+        const mapeamentoIds = {
+          pacotes: {},
+          subgrupos: {},
+          composicoes: {}
+        };
+        
+        // Primeiro, copiar pacotes e subgrupos com novos IDs
+        const pacotesCopiados = pacotes.map(pacote => {
+          console.log('Copiando pacote:', pacote);
+          
+          const novoIdPacote = `pacote_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+          mapeamentoIds.pacotes[pacote.id] = novoIdPacote;
+          
+          const novoPacote = {
+            ...pacote,
+            id: novoIdPacote,
+            subgrupos: []
+          };
+
+          // Copiar subgrupos se existirem
+          if (pacote.subgrupos && pacote.subgrupos.length > 0) {
+            console.log('Copiando subgrupos do pacote:', pacote.subgrupos);
+            novoPacote.subgrupos = pacote.subgrupos.map(subgrupo => {
+              console.log('Copiando subgrupo:', subgrupo);
+              
+              const novoIdSubgrupo = `subgrupo_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+              mapeamentoIds.subgrupos[subgrupo.id] = novoIdSubgrupo;
+              
+              const novoSubgrupo = {
+                ...subgrupo,
+                id: novoIdSubgrupo
+              };
+
+              console.log('Subgrupo copiado:', novoSubgrupo);
+              return novoSubgrupo;
+            });
+          }
+
+          console.log('Pacote copiado:', novoPacote);
+          return novoPacote;
+        });
+        
+        // Agora copiar composições com novos IDs e referências atualizadas
+        const composicoesCopiadas = [];
+        if (composicoesOriginais && composicoesOriginais.length > 0) {
+          console.log('Copiando composições com novos IDs e referências:');
+          
+          composicoesOriginais.forEach(composicao => {
+            console.log('Copiando composição:', composicao);
+            
+            const novaComposicao = {
+              ...composicao,
+              composicaoId: `comp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              // Atualizar referências para os novos IDs
+              pacoteId: mapeamentoIds.pacotes[composicao.pacoteId] || composicao.pacoteId,
+              subgrupoId: mapeamentoIds.subgrupos[composicao.subgrupoId] || composicao.subgrupoId
+            };
+            
+            console.log('Composição copiada:', novaComposicao);
+            composicoesCopiadas.push(novaComposicao);
+          });
+        }
+        
+        console.log('Mapeamento de IDs:', mapeamentoIds);
+        console.log('Composições copiadas:', composicoesCopiadas);
+        
+        return {
+          pacotes: pacotesCopiados,
+          composicoes: composicoesCopiadas
+        };
+      };
+
+      // Copiar a EAP completa com novos IDs
+      const eapCopiada = copiarEAPCompleta(orcamentoOriginal.pacotes, orcamentoOriginal.composicoes);
+      console.log('EAP copiada:', eapCopiada);
+
+      // Criar novo orçamento com os dados do formulário
+      const novoOrcamento = {
+        ...copyFormData,
+        userId: currentUser.uid,
+        createdAt: new Date(),
+        valorTotal: 0,
+        status: 'Em Análise',
+        // Copiar a estrutura da EAP com novos IDs
+        pacotes: eapCopiada.pacotes,
+        composicoes: eapCopiada.composicoes,
+        bdiConfig: orcamentoOriginal.bdiConfig ? { ...orcamentoOriginal.bdiConfig } : null
+      };
+
+      console.log('Novo orçamento a ser criado:', novoOrcamento);
+
+      // Adicionar o novo orçamento
+      const docRef = await addDoc(collection(db, 'orcamentos'), novoOrcamento);
+      console.log('Novo orçamento criado com ID:', docRef.id);
+
+      // Se o orçamento original tiver EAP, atualizar com a data da cópia
+      if (eapCopiada.pacotes.length > 0) {
+        await updateDoc(doc(db, 'orcamentos', docRef.id), {
+          ultimaAtualizacaoEAP: new Date()
+        });
+        console.log('Data de atualização da EAP definida');
+      }
+
+      setShowCopyModal(false);
+      setOrcamentoParaCopiar(null);
+      resetCopyForm();
+      fetchOrcamentos();
+      
+      // Navegar para a EAP do novo orçamento
+      navigate(`/orcamentos/${docRef.id}/eap`);
+      
+    } catch (error) {
+      setError('Erro ao copiar orçamento: ' + error.message);
+      console.error('Erro detalhado:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const filteredOrcamentos = orcamentos.filter(orcamento =>
     orcamento.nome.toLowerCase().includes(searchTerm.toLowerCase()) ||
     orcamento.cliente.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -233,10 +411,21 @@ function Orcamentos() {
           <h1><FaFileInvoiceDollar className="me-2" />Orçamentos</h1>
           <p className="text-muted">Crie e gerencie orçamentos para seus projetos</p>
         </div>
-        <Button onClick={() => setShowModal(true)} variant="primary">
-          <FaPlus className="me-2" />
-          Novo Orçamento
-        </Button>
+        <div className="d-flex gap-2">
+          <Button onClick={() => setShowModal(true)} variant="primary">
+            <FaPlus className="me-2" />
+            Novo Orçamento
+          </Button>
+          <Button 
+            onClick={() => setShowCopyModal(true)} 
+            variant="warning"
+            disabled={orcamentos.length === 0}
+            title={orcamentos.length === 0 ? "Não há orçamentos para copiar" : "Copiar um orçamento existente"}
+          >
+            <FaCopy className="me-2" />
+            Copiar Orçamento
+          </Button>
+        </div>
       </div>
 
       {error && <Alert variant="danger">{error}</Alert>}
@@ -328,6 +517,15 @@ function Orcamentos() {
                         title="Ver EAP"
                       >
                         <FaEye />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline-warning"
+                        className="me-2"
+                        onClick={() => handleCopyOrcamento(orcamento)}
+                        title="Copiar Orçamento"
+                      >
+                        <FaCopy />
                       </Button>
                       <Button
                         size="sm"
@@ -435,6 +633,144 @@ function Orcamentos() {
             </Button>
             <Button type="submit" variant="primary" disabled={loading}>
               {loading ? 'Salvando...' : (editingOrcamento ? 'Atualizar' : 'Salvar')}
+            </Button>
+          </Modal.Footer>
+        </Form>
+      </Modal>
+
+      {/* Modal para Copiar Orçamento */}
+      <Modal show={showCopyModal} onHide={() => {
+        setShowCopyModal(false);
+        setOrcamentoParaCopiar(null);
+        resetCopyForm();
+      }}>
+        <Modal.Header closeButton>
+          <Modal.Title>
+            <FaCopy className="me-2" />
+            Copiar Orçamento
+          </Modal.Title>
+        </Modal.Header>
+        <Form onSubmit={handleSubmitCopy}>
+          <Modal.Body>
+            {/* Seleção do orçamento para copiar */}
+            {!orcamentoParaCopiar && (
+              <Form.Group className="mb-3">
+                <Form.Label>Selecione o orçamento para copiar *</Form.Label>
+                <Form.Select
+                  onChange={(e) => {
+                    const orcamentoSelecionado = orcamentos.find(o => o.id === e.target.value);
+                    if (orcamentoSelecionado) {
+                      handleCopyOrcamento(orcamentoSelecionado);
+                    }
+                  }}
+                  required
+                >
+                  <option value="">Escolha um orçamento...</option>
+                  {orcamentos.map(orcamento => (
+                    <option key={orcamento.id} value={orcamento.id}>
+                      {orcamento.nome} - {orcamento.cliente}
+                    </option>
+                  ))}
+                </Form.Select>
+              </Form.Group>
+            )}
+
+            {/* Formulário de cópia */}
+            {orcamentoParaCopiar && (
+              <Alert variant="info" className="mb-3">
+                <strong>Copiando:</strong> {orcamentoParaCopiar.nome}
+                {orcamentoParaCopiar.pacotes && orcamentoParaCopiar.pacotes.length > 0 && (
+                  <div className="mt-1">
+                    <small>
+                      Este orçamento possui EAP com {orcamentoParaCopiar.pacotes.length} pacote(s) que serão copiados.
+                      {(() => {
+                        let totalComposicoes = 0;
+                        orcamentoParaCopiar.pacotes.forEach(pacote => {
+                          if (pacote.subgrupos) {
+                            pacote.subgrupos.forEach(subgrupo => {
+                              if (subgrupo.composicoes) {
+                                totalComposicoes += subgrupo.composicoes.length;
+                              }
+                            });
+                          }
+                        });
+                        return totalComposicoes > 0 ? ` Total de ${totalComposicoes} composição(ões) incluídas.` : '';
+                      })()}
+                    </small>
+                  </div>
+                )}
+              </Alert>
+            )}
+            
+            <Row>
+              <Col md={6}>
+                <Form.Group className="mb-3">
+                  <Form.Label>Nome do Projeto *</Form.Label>
+                  <Form.Control
+                    type="text"
+                    value={copyFormData.nome}
+                    onChange={(e) => setCopyFormData({...copyFormData, nome: e.target.value})}
+                    required
+                  />
+                </Form.Group>
+              </Col>
+              <Col md={6}>
+                <Form.Group className="mb-3">
+                  <Form.Label>Cliente *</Form.Label>
+                  <Form.Control
+                    type="text"
+                    value={copyFormData.cliente}
+                    onChange={(e) => setCopyFormData({...copyFormData, cliente: e.target.value})}
+                    required
+                  />
+                </Form.Group>
+              </Col>
+            </Row>
+
+            <Row>
+              <Col md={6}>
+                <Form.Group className="mb-3">
+                  <Form.Label>Endereço</Form.Label>
+                  <Form.Control
+                    type="text"
+                    value={copyFormData.endereco}
+                    onChange={(e) => setCopyFormData({...copyFormData, endereco: e.target.value})}
+                  />
+                </Form.Group>
+              </Col>
+              <Col md={6}>
+                <Form.Group className="mb-3">
+                  <Form.Label>Data *</Form.Label>
+                  <Form.Control
+                    type="date"
+                    value={copyFormData.data}
+                    onChange={(e) => setCopyFormData({...copyFormData, data: e.target.value})}
+                    required
+                  />
+                </Form.Group>
+              </Col>
+            </Row>
+            
+            <Form.Group className="mb-3">
+              <Form.Label>Descrição do Projeto</Form.Label>
+              <Form.Control
+                as="textarea"
+                rows={3}
+                value={copyFormData.descricao}
+                onChange={(e) => setCopyFormData({...copyFormData, descricao: e.target.value})}
+              />
+            </Form.Group>
+          </Modal.Body>
+          <Modal.Footer>
+            <Button variant="secondary" onClick={() => {
+              setShowCopyModal(false);
+              setOrcamentoParaCopiar(null);
+              resetCopyForm();
+            }}>
+              Cancelar
+            </Button>
+            <Button type="submit" variant="warning" disabled={loading}>
+              {loading ? 'Copiando...' : 'Copiar Orçamento'}
             </Button>
           </Modal.Footer>
         </Form>

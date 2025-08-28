@@ -81,3 +81,54 @@
   font-size: 0.9rem;
   opacity: 0.9;
 }
+
+/* Estilos para o cabeçalho da EAP */
+.eap-header {
+  background: linear-gradient(135deg, #f8f9fa, #e9ecef);
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin-bottom: 2rem;
+  border: 1px solid #dee2e6;
+}
+
+.eap-header h1 {
+  color: #2c3e50;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+}
+
+.eap-header .text-muted {
+  color: #6c757d !important;
+  font-size: 0.95rem;
+}
+
+.eap-header .btn {
+  font-weight: 500;
+  border-radius: 8px;
+  transition: all 0.2s ease;
+}
+
+.eap-header .btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+}
+
+.eap-header .btn-group {
+  gap: 0.5rem;
+}
+
+/* Responsividade para botões */
+@media (max-width: 768px) {
+  .eap-header .row {
+    margin: 0;
+  }
+  
+  .eap-header .col-md-6 {
+    padding: 0;
+    margin-bottom: 1rem;
+  }
+  
+  .eap-header .d-flex {
+    justify-content: center !important;
+  }
+}

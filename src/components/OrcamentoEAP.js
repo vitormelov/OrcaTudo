@@ -12,6 +12,7 @@ import {
 import { formatCurrency, formatCurrencyValue } from '../utils/formatters';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import * as XLSX from 'xlsx';
 import { 
   collection, 
   getDocs, 
@@ -39,7 +40,8 @@ import {
   FaEdit,
   FaChartBar,
   FaFilePdf,
-  FaCalculator
+  FaCalculator,
+  FaFileExcel
 } from 'react-icons/fa';
 
 // Função para formatar data de forma amigável
@@ -765,6 +767,151 @@ function OrcamentoEAP() {
     }
   };
 
+  const exportarEAPExcel = () => {
+    if (!orcamento) return;
+
+    try {
+      const todosPacotes = (orcamento.pacotes || []).sort((a, b) => a.ordem - b.ordem);
+      const valorTotal = calcularValorTotal();
+      const valorTotalComBDI = calcularValorTotalComBDI();
+
+      // Criar workbook com uma aba
+      const workbook = XLSX.utils.book_new();
+
+      // === ABA EAP ===
+      const eapData = [];
+      
+      // === CABEÇALHO PROFISSIONAL ===
+      // Logo e nome da empresa (linhas 1-3)
+      eapData.push(['LOGO DA EMPRESA']); // Linha 1 - Logo será inserido manualmente
+      eapData.push([]); // Linha 2 - Espaço para logo
+      eapData.push(['NOME DA EMPRESA']); // Linha 3 - Nome da empresa
+      eapData.push([]); // Linha 4 - Espaço
+      
+      // Informações do projeto (linhas 5-10)
+      eapData.push(['ESTRUTURA ANALÍTICA DO PROJETO (EAP)']);
+      eapData.push([]); // Linha 6 - Espaço
+      eapData.push(['Cliente:', orcamento.cliente || '']);
+      eapData.push(['Obra:', orcamento.nome || '']);
+      eapData.push(['Data da Exportação:', new Date().toLocaleDateString('pt-BR')]);
+      eapData.push(['Elaborador:', currentUser?.email || 'Usuário']);
+      eapData.push([]); // Linha 11 - Espaço
+      
+      // Informações adicionais do orçamento (linhas 12-15)
+      eapData.push(['Endereço:', orcamento.endereco || '']);
+      eapData.push(['Data do Orçamento:', new Date(orcamento.data).toLocaleDateString('pt-BR')]);
+      eapData.push(['Status:', orcamento.status || 'Em Análise']);
+      if (orcamento.ultimaAtualizacaoEAP) {
+        eapData.push(['Última Atualização:', formatarDataAmigavel(orcamento.ultimaAtualizacaoEAP)]);
+      }
+      eapData.push([]); // Linha 16 - Espaço
+      
+      // Resumo financeiro (linhas 17-19)
+      eapData.push(['RESUMO FINANCEIRO']);
+      eapData.push(['Valor Total (sem BDI):', valorTotal]);
+      if (orcamento.bdiConfig) {
+        const { lucro, tributos, financeiro, garantias } = orcamento.bdiConfig;
+        const bdi = (1 + lucro/100) * (1 + tributos/100) * (1 + financeiro/100) * (1 + garantias/100) - 1;
+        eapData.push(['BDI Aplicado:', `${(bdi * 100).toFixed(2)}%`]);
+        eapData.push(['Valor Total (com BDI):', valorTotalComBDI]);
+      }
+      eapData.push([]); // Linha 20 - Espaço
+      
+      // === TABELA PRINCIPAL DA EAP ===
+      // Cabeçalhos da tabela (linha 21)
+      eapData.push([
+        'Pacote/Subgrupo',
+        'Composição',
+        'Quantidade',
+        'Unidade',
+        'Material',
+        'Mão de Obra',
+        'Equipamento',
+        'Serviço',
+        'Total',
+        '%'
+      ]);
+
+      // Dados da EAP (linhas 22+)
+      todosPacotes.forEach((pacote) => {
+        const subgrupos = (pacote.subgrupos || []).sort((a, b) => a.ordem - b.ordem);
+        
+        subgrupos.forEach((subgrupo) => {
+          const itens = obterComposicoesDoSubgrupo(pacote.id, subgrupo.id);
+          
+          itens.forEach((comp) => {
+            const { subvalores, total } = calcularSubvaloresComposicao(comp);
+            const porcentagem = valorTotal > 0 ? ((total / valorTotal) * 100).toFixed(1) : '0.0';
+            
+            eapData.push([
+              `${pacote.nome} > ${subgrupo.nome}`,
+              comp.nome,
+              comp.quantidade,
+              comp.unidade,
+              subvalores.Material,
+              subvalores['Mão de Obra'],
+              subvalores.Equipamento,
+              subvalores.Serviço,
+              total,
+              `${porcentagem}%`
+            ]);
+          });
+        });
+      });
+
+      // Resumo por pacote
+      eapData.push([]); // Linha em branco
+      eapData.push(['RESUMO POR PACOTE']);
+      eapData.push(['Pacote', 'Valor Total', '%']);
+      
+      todosPacotes.forEach((pacote) => {
+        const totalPacote = totalDoPacote(pacote.id);
+        const porcentagemPacote = valorTotal > 0 ? ((totalPacote / valorTotal) * 100).toFixed(1) : '0.0';
+        
+        eapData.push([
+          pacote.nome,
+          totalPacote,
+          `${porcentagemPacote}%`
+        ]);
+      });
+
+      // Valor total final
+      eapData.push([]);
+      eapData.push(['VALOR TOTAL (sem BDI)', valorTotal]);
+      if (orcamento.bdiConfig) {
+        eapData.push(['VALOR TOTAL (com BDI)', valorTotalComBDI]);
+      }
+
+      // Criar worksheet da EAP
+      const eapWorksheet = XLSX.utils.aoa_to_sheet(eapData);
+      
+      // Configurar larguras das colunas
+      const columnWidths = [
+        { wch: 40 }, // Pacote/Subgrupo
+        { wch: 50 }, // Composição
+        { wch: 12 }, // Quantidade
+        { wch: 12 }, // Unidade
+        { wch: 15 }, // Material
+        { wch: 15 }, // Mão de Obra
+        { wch: 15 }, // Equipamento
+        { wch: 15 }, // Serviço
+        { wch: 15 }, // Total
+        { wch: 10 }  // %
+      ];
+      eapWorksheet['!cols'] = columnWidths;
+      
+      XLSX.utils.book_append_sheet(workbook, eapWorksheet, 'EAP');
+
+      // Salvar o arquivo Excel
+      const fileName = `EAP_${orcamento.nome.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().split('T')[0]}.xlsx`;
+      XLSX.writeFile(workbook, fileName);
+
+    } catch (error) {
+      console.error('Erro ao gerar Excel:', error);
+      alert('Erro ao gerar Excel. Verifique o console para mais detalhes.');
+    }
+  };
+
   if (!orcamento) {
     return <div>Carregando...</div>;
   }
@@ -773,25 +920,31 @@ function OrcamentoEAP() {
 
   return (
     <div>
-      <div className="d-flex justify-content-between align-items-center mb-4">
-        <div>
-          <Button 
-            variant="outline-secondary" 
-            onClick={() => navigate('/orcamentos')}
-            className="mb-2"
-          >
-            <FaArrowLeft className="me-2" />
-            Voltar aos Orçamentos
-          </Button>
-          <h1><FaFolder className="me-2" />EAP - {orcamento.nome}</h1>
-          <p className="text-muted">
-            Cliente: {orcamento.cliente} | Data: {new Date(orcamento.data).toLocaleDateString('pt-BR')}
-          </p>
-          {orcamento.ultimaAtualizacaoEAP && (
-            <p className="text-muted mb-2">
-              Última atualização: {formatarDataAmigavel(orcamento.ultimaAtualizacaoEAP)}
+      {/* Cabeçalho Principal */}
+      <div className="eap-header">
+        {/* Botão Voltar e Título */}
+        <div className="d-flex justify-content-between align-items-start mb-3">
+          <div>
+            <Button 
+              variant="outline-secondary" 
+              onClick={() => navigate('/orcamentos')}
+              className="mb-3"
+            >
+              <FaArrowLeft className="me-2" />
+              Voltar aos Orçamentos
+            </Button>
+            <h1 className="mb-2"><FaFolder className="me-2" />EAP - {orcamento.nome}</h1>
+            <p className="text-muted mb-1">
+              Cliente: {orcamento.cliente} | Data: {new Date(orcamento.data).toLocaleDateString('pt-BR')}
             </p>
-          )}
+            {orcamento.ultimaAtualizacaoEAP && (
+              <p className="text-muted mb-2">
+                Última atualização: {formatarDataAmigavel(orcamento.ultimaAtualizacaoEAP)}
+              </p>
+            )}
+          </div>
+          
+          {/* Status */}
           <div className="d-flex align-items-center gap-2">
             <span className="text-muted">Status:</span>
             <Dropdown>
@@ -819,45 +972,65 @@ function OrcamentoEAP() {
             </Dropdown>
           </div>
         </div>
-        <div className="d-flex gap-2">
-          <Button onClick={() => setShowModalPacote(true)} variant="primary">
-            <FaPlus className="me-2" />
-            Criar Pacote
-          </Button>
-          <Button 
-            onClick={() => setShowModalSubgrupo(true)} 
-            variant="info"
-            disabled={todosPacotes.length === 0}
-            title={todosPacotes.length === 0 ? "Crie um pacote primeiro" : ""}
-          >
-            <FaPlus className="me-2" />
-            Criar Subgrupo
-          </Button>
-          <Button 
-            onClick={() => setShowModalComposicao(true)} 
-            variant="success"
-            disabled={!temSubgrupos()}
-            title={!temSubgrupos() ? "Crie um subgrupo primeiro para adicionar composições" : ""}
-          >
-            <FaLayerGroup className="me-2" />
-            Adicionar Composição
-          </Button>
-          <Button 
-            onClick={() => setShowModalBDI(true)} 
-            variant={orcamento.bdiConfig ? "success" : "info"}
-            title={orcamento.bdiConfig ? "BDI aplicado - Clique para editar" : "Configurar BDI"}
-          >
-            <FaCalculator className="me-2" />
-            BDI {orcamento.bdiConfig && <span className="badge bg-light text-dark ms-1">✓</span>}
-          </Button>
-          <Button onClick={exportarEAPPdf} variant="secondary">
-            <FaFilePdf className="me-2" />
-            Exportar PDF
-          </Button>
-          <Button onClick={salvarEAP} variant="warning" disabled={loading}>
-            <FaSave className="me-2" />
-            {loading ? 'Salvando...' : 'Salvar EAP'}
-          </Button>
+
+        {/* Botões de Ação - Organizados em Grupos */}
+        <div className="row g-3">
+          {/* Grupo 1: Criação de Estrutura */}
+          <div className="col-md-6">
+            <div className="d-flex gap-2 flex-wrap">
+              <Button onClick={() => setShowModalPacote(true)} variant="primary" size="sm">
+                <FaPlus className="me-2" />
+                Criar Pacote
+              </Button>
+              <Button 
+                onClick={() => setShowModalSubgrupo(true)} 
+                variant="info"
+                size="sm"
+                disabled={todosPacotes.length === 0}
+                title={todosPacotes.length === 0 ? "Crie um pacote primeiro" : ""}
+              >
+                <FaPlus className="me-2" />
+                Criar Subgrupo
+              </Button>
+              <Button 
+                onClick={() => setShowModalComposicao(true)} 
+                variant="success"
+                size="sm"
+                disabled={!temSubgrupos()}
+                title={!temSubgrupos() ? "Crie um subgrupo primeiro para adicionar composições" : ""}
+              >
+                <FaLayerGroup className="me-2" />
+                Adicionar Composição
+              </Button>
+            </div>
+          </div>
+          
+          {/* Grupo 2: Configurações e Exportação */}
+          <div className="col-md-6">
+            <div className="d-flex gap-2 flex-wrap justify-content-md-end">
+              <Button 
+                onClick={() => setShowModalBDI(true)} 
+                variant={orcamento.bdiConfig ? "success" : "info"}
+                size="sm"
+                title={orcamento.bdiConfig ? "BDI aplicado - Clique para editar" : "Configurar BDI"}
+              >
+                <FaCalculator className="me-2" />
+                BDI {orcamento.bdiConfig && <span className="badge bg-light text-dark ms-1">✓</span>}
+              </Button>
+              <Button onClick={exportarEAPPdf} variant="secondary" size="sm">
+                <FaFilePdf className="me-2" />
+                Exportar PDF
+              </Button>
+              <Button onClick={exportarEAPExcel} variant="success" size="sm">
+                <FaFileExcel className="me-2" />
+                Exportar Excel
+              </Button>
+              <Button onClick={salvarEAP} variant="warning" size="sm" disabled={loading}>
+                <FaSave className="me-2" />
+                {loading ? 'Salvando...' : 'Salvar EAP'}
+              </Button>
+            </div>
+          </div>
         </div>
       </div>
 
