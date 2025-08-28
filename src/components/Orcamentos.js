@@ -92,19 +92,40 @@ function Orcamentos() {
     setError('');
 
     try {
-      const orcamentoData = {
-        ...formData,
-        composicoes: [],
-        userId: currentUser.uid,
-        createdAt: new Date(),
-        valorTotal: 0,
-        status: 'Em Análise'
-      };
-
       if (editingOrcamento) {
-        await updateDoc(doc(db, 'orcamentos', editingOrcamento.id), orcamentoData);
+        // EDITAR: Preservar todos os dados existentes e atualizar apenas os campos editados
+        console.log('Editando orçamento existente:', editingOrcamento.id);
+        
+        const dadosAtualizados = {
+          nome: formData.nome,
+          descricao: formData.descricao,
+          cliente: formData.cliente,
+          endereco: formData.endereco,
+          data: formData.data,
+          // Preservar todos os outros campos existentes
+          updatedAt: new Date()
+        };
+        
+        console.log('Dados a serem atualizados:', dadosAtualizados);
+        await updateDoc(doc(db, 'orcamentos', editingOrcamento.id), dadosAtualizados);
+        console.log('Orçamento atualizado com sucesso');
+        
       } else {
+        // NOVO: Criar orçamento com dados básicos
+        console.log('Criando novo orçamento');
+        
+        const orcamentoData = {
+          ...formData,
+          composicoes: [],
+          userId: currentUser.uid,
+          createdAt: new Date(),
+          valorTotal: 0,
+          status: 'Em Análise'
+        };
+        
+        console.log('Novo orçamento a ser criado:', orcamentoData);
         await addDoc(collection(db, 'orcamentos'), orcamentoData);
+        console.log('Novo orçamento criado com sucesso');
       }
 
       setShowModal(false);
@@ -112,8 +133,8 @@ function Orcamentos() {
       resetForm();
       fetchOrcamentos();
     } catch (error) {
-      setError('Erro ao salvar orçamento');
-      console.error(error);
+      setError('Erro ao salvar orçamento: ' + error.message);
+      console.error('Erro detalhado:', error);
     }
 
     setLoading(false);
