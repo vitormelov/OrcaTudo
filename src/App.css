@@ -382,7 +382,7 @@ html, body {
 
 /* Centralizar o conteúdo do Dashboard */
 .container.mt-4 {
-  max-width: 1200px;
+  max-width: 85%;
   margin: 0 auto !important;
   padding: 0 15px;
   overflow-y: auto;

@@ -431,6 +431,18 @@ function OrcamentoEAP() {
     });
   };
 
+  // Função para formatar valores com separadores de milhares e decimais
+  const formatarValor = (valor) => {
+    if (valor === null || valor === undefined || isNaN(valor)) {
+      return '0,00';
+    }
+    
+    return Number(valor).toLocaleString('pt-BR', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    });
+  };
+
   const calcularValorTotal = () => {
     return (orcamento?.composicoes || []).reduce((total, composicao) => total + composicao.custoTotal, 0);
   };
@@ -626,34 +638,117 @@ function OrcamentoEAP() {
       const margin = 20;
       let yPosition = 20;
 
-      const todosPacotes = (orcamento.pacotes || []).sort((a, b) => a.ordem - b.ordem);
-
-      // Cabeçalho
-      doc.setFontSize(20);
+      // Cabeçalho profissional com fundo azul
+      doc.setFillColor(41, 128, 185);
+      doc.rect(0, 0, pageWidth, 45, 'F');
+      
+      // Logo placeholder (círculo branco com azul interno)
+      doc.setFillColor(255, 255, 255);
+      doc.circle(25, 22, 8, 'F');
+      doc.setFillColor(41, 128, 185);
+      doc.circle(25, 22, 6, 'F');
+      
+      // Título principal
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(18);
       doc.setFont('helvetica', 'bold');
-      doc.text('Estrutura Analítica do Projeto (EAP)', pageWidth / 2, yPosition, { align: 'center' });
-      yPosition += 20;
-
-      // Informações do orçamento
-      doc.setFontSize(12);
+      doc.text('ESTRUTURA ANALÍTICA DO PROJETO (EAP)', pageWidth / 2, 28, { align: 'center' });
+      
+      // Informações do projeto em duas colunas
+      doc.setTextColor(0, 0, 0);
+      doc.setFontSize(10);
       doc.setFont('helvetica', 'normal');
-      doc.text(`Projeto: ${orcamento.nome}`, margin, yPosition);
-      yPosition += 10;
-      doc.text(`Cliente: ${orcamento.cliente}`, margin, yPosition);
-      yPosition += 10;
-      doc.text(`Data: ${new Date(orcamento.data).toLocaleDateString('pt-BR')}`, margin, yPosition);
-      yPosition += 10;
-      doc.text(`Status: ${orcamento.status || 'Em Análise'}`, margin, yPosition);
-      yPosition += 10;
-      if (orcamento.ultimaAtualizacaoEAP) {
-        doc.text(`Última atualização: ${formatarDataAmigavel(orcamento.ultimaAtualizacaoEAP)}`, margin, yPosition);
-        yPosition += 10;
-      }
-      yPosition += 15;
-
-      // Tabela de composições
-      const composicoesData = [];
+      
+      // Coluna esquerda
+      doc.text('PROJETO:', margin, 60);
+      doc.text('CLIENTE:', margin, 70);
+      doc.text('ENDEREÇO:', margin, 80);
+      doc.text('DATA:', margin, 90);
+      doc.text('STATUS:', margin, 100);
+      
+      // Coluna direita
+      doc.text('ELABORADOR:', pageWidth - 80, 60);
+      doc.text('ORÇAMENTO:', pageWidth - 80, 70);
+      doc.text('ÚLTIMA ATUALIZAÇÃO:', pageWidth - 80, 80);
+      doc.text('BDI APLICADO:', pageWidth - 80, 90);
+      
+      // Valores das informações
+      doc.setFont('helvetica', 'bold');
+      doc.text(orcamento.nome || 'N/A', margin + 35, 60);
+      doc.text(orcamento.cliente || 'N/A', margin + 35, 70);
+      doc.text(orcamento.endereco || 'N/A', margin + 35, 80);
+      doc.text(new Date(orcamento.data).toLocaleDateString('pt-BR') || 'N/A', margin + 35, 90);
+      doc.text(orcamento.status || 'Em Análise', margin + 35, 100);
+      
+      doc.text(currentUser?.displayName || currentUser?.email || 'N/A', pageWidth - 35, 60);
+      doc.text(new Date(orcamento.data).toLocaleDateString('pt-BR') || 'N/A', pageWidth - 35, 70);
+      doc.text(orcamento.ultimaAtualizacaoEAP ? formatarDataAmigavel(orcamento.ultimaAtualizacaoEAP) : 'N/A', pageWidth - 35, 80);
+      
       const valorTotal = calcularValorTotal();
+      const valorTotalComBDI = calcularValorTotalComBDI();
+      const bdiPercentual = valorTotal > 0 ? ((valorTotalComBDI - valorTotal) / valorTotal) * 100 : 0;
+      doc.text(`${bdiPercentual.toFixed(2)}%`, pageWidth - 35, 90);
+      
+      // Linha separadora
+      doc.setDrawColor(200, 200, 200);
+      doc.line(margin, 110, pageWidth - margin, 110);
+      
+      // Resumo financeiro
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'bold');
+      doc.text('RESUMO FINANCEIRO', pageWidth / 2, 125, { align: 'center' });
+      
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'normal');
+      doc.text('Valor Total (sem BDI):', margin, 140);
+      doc.text('BDI Aplicado:', margin, 150);
+      doc.text('Valor Total (com BDI):', margin, 160);
+      
+      doc.setFont('helvetica', 'bold');
+      doc.text(formatCurrency(valorTotal), pageWidth - margin - 40, 140);
+      doc.text(`${bdiPercentual.toFixed(2)}%`, pageWidth - margin - 40, 150);
+      doc.text(formatCurrency(valorTotalComBDI), pageWidth - margin - 40, 160);
+      
+      // Linha separadora
+      doc.line(margin, 170, pageWidth - margin, 170);
+      
+      // EAP - Início em nova página se necessário
+      let eapYPosition = 180;
+      let pageNumber = 1;
+      
+      // Função para adicionar nova página
+      const addNewPage = () => {
+        doc.addPage();
+        pageNumber++;
+        eapYPosition = 20;
+        
+        // Cabeçalho da página
+        doc.setFillColor(41, 128, 185);
+        doc.rect(0, 0, pageWidth, 15, 'F');
+        doc.setTextColor(255, 255, 255);
+        doc.setFontSize(10);
+        doc.text(`EAP - Página ${pageNumber}`, pageWidth / 2, 8, { align: 'center' });
+        doc.text(orcamento.nome || 'N/A', pageWidth / 2, 12, { align: 'center' });
+        
+        doc.setTextColor(0, 0, 0);
+        eapYPosition = 20;
+      };
+      
+      // Verificar se precisa de nova página para a tabela EAP
+      if (eapYPosition > doc.internal.pageSize.height - 100) {
+        addNewPage();
+      }
+      
+      // Título da seção EAP
+      doc.setFontSize(16);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(41, 128, 185);
+      doc.text('ESTRUTURA ANALÍTICA DO PROJETO', pageWidth / 2, eapYPosition, { align: 'center' });
+      eapYPosition += 20;
+      
+      // Tabela de composições com layout melhorado
+      const composicoesData = [];
+      const todosPacotes = (orcamento.pacotes || []).sort((a, b) => a.ordem - b.ordem);
 
       todosPacotes.forEach((pacote) => {
         const subgrupos = (pacote.subgrupos || []).sort((a, b) => a.ordem - b.ordem);
@@ -665,9 +760,20 @@ function OrcamentoEAP() {
             const { subvalores, total } = calcularSubvaloresComposicao(comp);
             const porcentagem = valorTotal > 0 ? ((total / valorTotal) * 100).toFixed(1) : '0.0';
             
+            // Quebrar texto longo se necessário
+            let nomeComposicao = comp.nome;
+            if (nomeComposicao.length > 40) {
+              nomeComposicao = nomeComposicao.substring(0, 37) + '...';
+            }
+            
+            let nomePacoteSubgrupo = `${pacote.nome} > ${subgrupo.nome}`;
+            if (nomePacoteSubgrupo.length > 35) {
+              nomePacoteSubgrupo = nomePacoteSubgrupo.substring(0, 32) + '...';
+            }
+            
             composicoesData.push([
-              `${pacote.nome} > ${subgrupo.nome}`,
-              comp.nome,
+              nomePacoteSubgrupo,
+              nomeComposicao,
               `${comp.quantidade} ${comp.unidade}`,
               formatCurrency(subvalores.Material),
               formatCurrency(subvalores['Mão de Obra']),
@@ -693,55 +799,65 @@ function OrcamentoEAP() {
         '%'
       ];
 
-      // Configurações da tabela
+      // Configurações da tabela melhorada
       const tableConfig = {
         head: [headers],
         body: composicoesData,
-        startY: yPosition,
+        startY: eapYPosition,
         margin: { left: margin, right: margin },
         styles: {
-          fontSize: 8,
-          cellPadding: 2
+          fontSize: 7,
+          cellPadding: 3,
+          lineWidth: 0.1
         },
         headStyles: {
-          fillColor: [66, 139, 202],
+          fillColor: [41, 128, 185],
           textColor: 255,
-          fontStyle: 'bold'
+          fontStyle: 'bold',
+          fontSize: 8
         },
         alternateRowStyles: {
-          fillColor: [245, 245, 245]
+          fillColor: [248, 249, 250]
         },
         columnStyles: {
-          0: { cellWidth: 35 }, // Pacote/Subgrupo
-          1: { cellWidth: 35 }, // Composição
-          2: { cellWidth: 20 }, // Quantidade
-          3: { cellWidth: 20 }, // Material
-          4: { cellWidth: 20 }, // Mão de Obra
-          5: { cellWidth: 20 }, // Equipamento
-          6: { cellWidth: 20 }, // Serviço
-          7: { cellWidth: 20 }, // Total
-          8: { cellWidth: 15 }  // %
+          0: { cellWidth: 32, cellMinWidth: 32 }, // Pacote/Subgrupo
+          1: { cellWidth: 35, cellMinWidth: 35 }, // Composição
+          2: { cellWidth: 18, cellMinWidth: 18 }, // Quantidade
+          3: { cellWidth: 18, cellMinWidth: 18 }, // Material
+          4: { cellWidth: 18, cellMinWidth: 18 }, // Mão de Obra
+          5: { cellWidth: 18, cellMinWidth: 18 }, // Equipamento
+          6: { cellWidth: 18, cellMinWidth: 18 }, // Serviço
+          7: { cellWidth: 18, cellMinWidth: 18 }, // Total
+          8: { cellWidth: 12, cellMinWidth: 12 }  // %
+        },
+        didDrawPage: function (data) {
+          // Adicionar número da página
+          doc.setFontSize(8);
+          doc.setTextColor(128, 128, 128);
+          doc.text(`Página ${doc.internal.getCurrentPageInfo().pageNumber}`, pageWidth / 2, doc.internal.pageSize.height - 10, { align: 'center' });
         }
       };
 
       // Gerar tabela
       autoTable(doc, tableConfig);
 
-      // Resumo por pacote
-      let resumoY = yPosition + (composicoesData.length * 8) + 30;
+      // Resumo por pacote em nova página se necessário
+      let resumoY = doc.lastAutoTable.finalY + 20;
       
-      if (resumoY > doc.internal.pageSize.height - 40) {
-        doc.addPage();
+      if (resumoY > doc.internal.pageSize.height - 60) {
+        addNewPage();
         resumoY = 20;
       }
 
       doc.setFontSize(14);
       doc.setFont('helvetica', 'bold');
-      doc.text('Resumo por Pacote', margin, resumoY);
+      doc.setTextColor(41, 128, 185);
+      doc.text('RESUMO POR PACOTE', pageWidth / 2, resumoY, { align: 'center' });
       resumoY += 15;
 
       doc.setFontSize(10);
       doc.setFont('helvetica', 'normal');
+      doc.setTextColor(0, 0, 0);
 
       todosPacotes.forEach((pacote) => {
         const totalPacote = totalDoPacote(pacote.id);
@@ -752,10 +868,23 @@ function OrcamentoEAP() {
       });
 
       // Valor total
-      resumoY += 10;
-      doc.setFontSize(12);
+      resumoY += 15;
+      doc.setDrawColor(200, 200, 200);
+      doc.line(margin, resumoY, pageWidth - margin, resumoY);
+      resumoY += 15;
+      
+      doc.setFontSize(14);
       doc.setFont('helvetica', 'bold');
-      doc.text(`Valor Total: ${formatCurrency(valorTotal)}`, margin, resumoY);
+      doc.setTextColor(41, 128, 185);
+      doc.text(`VALOR TOTAL DO PROJETO: ${formatCurrency(valorTotal)}`, margin, resumoY);
+      resumoY += 10;
+      doc.text(`VALOR TOTAL COM BDI: ${formatCurrency(valorTotalComBDI)}`, margin, resumoY);
+
+      // Rodapé
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(128, 128, 128);
+      doc.text(`Documento gerado em ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR')}`, pageWidth / 2, doc.internal.pageSize.height - 20, { align: 'center' });
 
       // Salvar o PDF
       const fileName = `EAP_${orcamento.nome.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`;
@@ -1134,20 +1263,20 @@ function OrcamentoEAP() {
                         >
                           <FaTrash />
                         </Button>
-                        <div className="text-end">
-                          <div className="fw-bold">{formatCurrency(totalDoPacote(pacote.id))}</div>
-                          <small className="text-secondary">
-                            {(() => {
-                              const valorTotal = calcularValorTotal();
-                              const totalPacote = totalDoPacote(pacote.id);
-                              if (valorTotal > 0) {
-                                const porcentagem = (totalPacote / valorTotal) * 100;
-                                return porcentagem < 0.1 ? '<0.1' : porcentagem.toFixed(1);
-                              }
-                              return '0.0';
-                            })()}%
-                          </small>
-                        </div>
+                                        <div className="text-end">
+                  <div className="fw-bold">{formatarValor(totalDoPacote(pacote.id))}</div>
+                  <small className="text-secondary">
+                    {(() => {
+                      const valorTotal = calcularValorTotal();
+                      const totalPacote = totalDoPacote(pacote.id);
+                      if (valorTotal > 0) {
+                        const porcentagem = (totalPacote / valorTotal) * 100;
+                        return porcentagem < 0.1 ? '<0.1' : porcentagem.toFixed(1);
+                      }
+                      return '0.0';
+                    })()}%
+                  </small>
+                </div>
                       </div>
                     </Card.Header>
                     
@@ -1198,7 +1327,7 @@ function OrcamentoEAP() {
                                   </Button>
                                   <div className="text-end">
                                     <div className="fw-bold text-info">
-                                      {formatCurrency(totalDoSubgrupo(pacote.id, subgrupo.id))}
+                                      {formatarValor(totalDoSubgrupo(pacote.id, subgrupo.id))}
                                     </div>
                                     <small className="text-secondary">
                                       {(() => {
@@ -1220,29 +1349,29 @@ function OrcamentoEAP() {
                               ) : (
                                 <div>
                                   {/* Cabeçalho das colunas */}
-                                  <div className="row bg-light py-2 mb-2 rounded">
-                                    <div className="col-5">
+                                  <div className="d-flex bg-light py-2 mb-2 rounded" style={{width: '100%'}}>
+                                    <div style={{width: '40%', paddingLeft: '15px'}}>
                                       <small className="text-muted fw-bold">COMPOSIÇÃO</small>
                                     </div>
-                                    <div className="col-1 text-center">
+                                    <div style={{width: '10%'}} className="text-center">
                                       <small className="text-muted fw-bold">MATERIAL</small>
                                     </div>
-                                    <div className="col-1 text-center">
+                                    <div style={{width: '10%'}} className="text-center">
                                       <small className="text-muted fw-bold">M.O.</small>
                                     </div>
-                                    <div className="col-1 text-center">
+                                    <div style={{width: '10%'}} className="text-center">
                                       <small className="text-muted fw-bold">EQUIP.</small>
                                     </div>
-                                    <div className="col-1 text-center">
+                                    <div style={{width: '10%'}} className="text-center">
                                       <small className="text-muted fw-bold">SERVIÇO</small>
                                     </div>
-                                    <div className="col-1 text-center">
+                                    <div style={{width: '10%'}} className="text-center">
                                       <small className="text-muted fw-bold">TOTAL</small>
                                     </div>
-                                    <div className="col-1 text-center">
+                                    <div style={{width: '5%'}} className="text-center">
                                       <small className="text-muted fw-bold">%</small>
                                     </div>
-                                    <div className="col-1 text-center">
+                                    <div style={{width: '5%'}} className="text-center">
                                       <small className="text-muted fw-bold">AÇÕES</small>
                                     </div>
                                   </div>
@@ -1254,10 +1383,10 @@ function OrcamentoEAP() {
                                         const { subvalores, total } = calcularSubvaloresComposicao(comp);
                                         return (
                                           <SortableComp key={comp.tempId} id={comp.tempId}>
-                                            <ListGroup.Item style={{ borderLeft: 'none', borderRight: 'none' }}>
-                                              <div className="row align-items-center py-1">
-                                                {/* Nome da Composição - 50% */}
-                                                <div className="col-5">
+                                            <ListGroup.Item style={{ borderLeft: 'none', borderRight: 'none', padding: '0' }}>
+                                              <div className="d-flex align-items-center py-1" style={{width: '100%'}}>
+                                                {/* Nome da Composição - 40% */}
+                                                <div style={{width: '40%', paddingLeft: '15px'}}>
                                                   <strong className="d-block">{comp.nome}</strong>
                                                   <div className="text-muted" style={{fontSize: '0.85rem'}}>
                                                     {comp.quantidade} {comp.unidade} × {formatCurrency(comp.custoUnitario)} = {formatCurrency(comp.custoTotal)}
@@ -1265,38 +1394,39 @@ function OrcamentoEAP() {
                                                 </div>
                                                 
                                                 {/* Material - 10% */}
-                                                <div className="col-1 text-center border-start">
-                                                  <strong className="text-primary d-block">{formatCurrency(subvalores.Material)}</strong>
+                                                <div style={{width: '10%'}} className="text-center border-start">
+                                                  <strong className="text-primary d-block" style={{fontSize: '0.8rem'}}>{formatarValor(subvalores.Material)}</strong>
                                                 </div>
                                                 
                                                 {/* Mão de Obra - 10% */}
-                                                <div className="col-1 text-center border-start">
-                                                  <strong className="text-success d-block">{formatCurrency(subvalores['Mão de Obra'])}</strong>
+                                                <div style={{width: '10%'}} className="text-center border-start">
+                                                  <strong className="text-success d-block" style={{fontSize: '0.8rem'}}>{formatarValor(subvalores['Mão de Obra'])}</strong>
                                                 </div>
                                                 
                                                 {/* Equipamento - 10% */}
-                                                <div className="col-1 text-center border-start">
-                                                  <strong className="text-warning d-block">{formatCurrency(subvalores.Equipamento)}</strong>
+                                                <div style={{width: '10%'}} className="text-center border-start">
+                                                  <strong className="text-warning d-block" style={{fontSize: '0.8rem'}}>{formatarValor(subvalores.Equipamento)}</strong>
                                                 </div>
                                                 
                                                 {/* Serviço - 10% */}
-                                                <div className="col-1 text-center border-start">
-                                                  <strong className="text-info d-block">{formatCurrency(subvalores.Serviço)}</strong>
+                                                <div style={{width: '10%'}} className="text-center border-start">
+                                                  <strong className="text-info d-block" style={{fontSize: '0.8rem'}}>{formatarValor(subvalores.Serviço)}</strong>
                                                 </div>
                                                 
                                                 {/* Total - 10% */}
-                                                <div className="col-1 text-center border-start">
-                                                  <strong className="text-dark fs-6 d-block">{formatCurrency(total)}</strong>
+                                                <div style={{width: '10%'}} className="text-center border-start">
+                                                  <strong className="text-dark d-block" style={{fontSize: '0.8rem'}}>{formatarValor(total)}</strong>
                                                 </div>
                                                 
                                                 {/* Porcentagem - 5% */}
-                                                <div className="col-1 text-center border-start">
-                                                  <strong className="text-secondary d-block">
+                                                <div style={{width: '5%'}} className="text-center border-start">
+                                                  <strong className="text-secondary d-block" style={{fontSize: '0.8rem'}}>
                                                     {(() => {
                                                       const valorTotal = calcularValorTotal();
                                                       if (valorTotal > 0) {
                                                         const porcentagem = (total / valorTotal) * 100;
                                                         return porcentagem < 0.1 ? '<0.1' : porcentagem.toFixed(1);
+                                                        return '0.0';
                                                       }
                                                       return '0.0';
                                                     })()}%
@@ -1304,7 +1434,7 @@ function OrcamentoEAP() {
                                                 </div>
                                                 
                                                 {/* Botão Deletar - 5% */}
-                                                <div className="col-1 text-center border-start">
+                                                <div style={{width: '5%'}} className="text-center border-start">
                                                   <Button size="sm" variant="outline-danger" onClick={() => removerComposicao(comp.tempId)}>
                                                     <FaTrash />
                                                   </Button>
@@ -1332,14 +1462,14 @@ function OrcamentoEAP() {
           <div className="text-end mt-3">
             <div className="row justify-content-end">
               <div className="col-auto">
-                <h5 className="mb-2">Valor Total: {formatCurrency(calcularValorTotal())}</h5>
+                <h5 className="mb-2">Valor Total: {formatarValor(calcularValorTotal())}</h5>
                 {orcamento.bdiConfig ? (
                   <>
                     <h6 className="text-info mb-2">
-                      BDI ({calcularBDI().toFixed(1)}%): {formatCurrency(calcularValorBDI())}
+                      BDI ({calcularBDI().toFixed(1)}%): {formatarValor(calcularValorBDI())}
                       <span className="badge bg-success ms-2">Aplicado</span>
                     </h6>
-                    <h4 className="text-success">Total com BDI: {formatCurrency(calcularValorTotalComBDI())}</h4>
+                    <h4 className="text-success">Total com BDI: {formatarValor(calcularValorTotalComBDI())}</h4>
                   </>
                 ) : (
                   <h6 className="text-muted mb-2">
@@ -1654,7 +1784,7 @@ function OrcamentoEAP() {
                     <strong>Valor Total da EAP:</strong>
                   </div>
                   <div className="col-6 text-end">
-                    {formatCurrency(calcularValorTotal())}
+                    {formatarValor(calcularValorTotal())}
                   </div>
                 </div>
                 
@@ -1672,7 +1802,7 @@ function OrcamentoEAP() {
                     <strong>Valor do BDI:</strong>
                   </div>
                   <div className="col-6 text-end text-info">
-                    {formatCurrency(calcularValorBDI())}
+                    {formatarValor(calcularValorBDI())}
                   </div>
                 </div>
                 
@@ -1681,7 +1811,7 @@ function OrcamentoEAP() {
                     <strong>Total com BDI:</strong>
                   </div>
                   <div className="col-6 text-end text-success">
-                    <strong>{formatCurrency(calcularValorTotalComBDI())}</strong>
+                    <strong>{formatarValor(calcularValorTotalComBDI())}</strong>
                   </div>
                 </div>
               </div>
