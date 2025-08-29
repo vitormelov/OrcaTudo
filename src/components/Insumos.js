@@ -180,6 +180,21 @@ function Insumos() {
     }
   };
 
+  // Função para atualizar o histórico quando necessário
+  const atualizarHistorico = async (insumoId) => {
+    if (showHistorico && historicoData.insumo?.id === insumoId) {
+      try {
+        const precosRef = collection(doc(db, 'insumos', insumoId), 'precos');
+        const snap = await getDocs(precosRef);
+        const precos = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+          .sort((a, b) => epochFromLocalDate(a.data) - epochFromLocalDate(b.data));
+        setHistoricoData(prev => ({ ...prev, precos }));
+      } catch (e) {
+        console.error('Erro ao atualizar histórico:', e);
+      }
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -227,6 +242,9 @@ function Insumos() {
           
           // Atualizar composições que usam este insumo
           await atualizarComposicoesComInsumo(editingInsumo.id, parseFloat(formData.precoUnitario));
+          
+          // Atualizar o histórico se o modal estiver aberto
+          await atualizarHistorico(editingInsumo.id);
         }
       } else {
         // Criar novo insumo
@@ -561,7 +579,7 @@ function Insumos() {
                   datasets: [
                     {
                       label: 'Preço (R$)',
-                      data: historicoData.precos.map(p => p.valor),
+                      data: historicoData.precos.map(p => p.preco),
                       borderColor: 'rgba(0, 123, 255, 1)',
                       backgroundColor: 'rgba(0, 123, 255, 0.2)'
                     }

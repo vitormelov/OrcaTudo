@@ -11,6 +11,7 @@ import Composicoes from './components/Composicoes';
 import Orcamentos from './components/Orcamentos';
 import OrcamentoEAP from './components/OrcamentoEAP';
 import CurvaABC from './components/CurvaABC';
+import Comparativo from './components/Comparativo';
 import Login from './components/Login';
 import { AuthProvider } from './contexts/AuthContext';
 import PrivateRoute from './components/PrivateRoute';
@@ -52,6 +53,11 @@ function App() {
               <Route path="/orcamentos/:id/curva-abc" element={
                 <PrivateRoute>
                   <CurvaABC />
+                </PrivateRoute>
+              } />
+              <Route path="/comparativo" element={
+                <PrivateRoute>
+                  <Comparativo />
                 </PrivateRoute>
               } />
             </Routes>

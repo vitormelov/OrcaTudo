@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Navbar, Nav, Container, Button, Dropdown } from 'react-bootstrap';
 import { useAuth } from '../contexts/AuthContext';
-import { FaCalculator, FaBoxes, FaLayerGroup, FaFileInvoiceDollar, FaUser, FaSignOutAlt } from 'react-icons/fa';
+import { FaCalculator, FaBoxes, FaLayerGroup, FaFileInvoiceDollar, FaBalanceScale, FaUser, FaSignOutAlt } from 'react-icons/fa';
 
 function NavigationBar() {
   const { currentUser, logout } = useAuth();
@@ -49,6 +49,10 @@ function NavigationBar() {
             <Nav.Link as={Link} to="/orcamentos" className="d-flex align-items-center">
               <FaFileInvoiceDollar className="me-1" />
               Orçamentos
+            </Nav.Link>
+            <Nav.Link as={Link} to="/comparativo" className="d-flex align-items-center">
+              <FaBalanceScale className="me-1" />
+              Comparativo
             </Nav.Link>
           </Nav>
           

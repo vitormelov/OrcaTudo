@@ -388,3 +388,41 @@ html, body {
   overflow-y: auto;
   min-height: calc(100vh - 100px);
 }
+
+/* Estilos para a página de Comparativo */
+.comparativo-page .card {
+  border: 1px solid #e9ecef;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+  transition: all 0.2s ease;
+}
+
+.comparativo-page .card:hover {
+  box-shadow: 0 4px 8px rgba(0,0,0,0.12);
+}
+
+.comparativo-page .card-header {
+  background: linear-gradient(135deg, #f8f9fa, #e9ecef);
+  border-bottom: 1px solid #dee2e6;
+  font-weight: 600;
+}
+
+.comparativo-page .table th {
+  background-color: #f8f9fa;
+  border-top: none;
+  font-weight: 600;
+  text-align: center;
+}
+
+.comparativo-page .table td {
+  vertical-align: middle;
+}
+
+.comparativo-page .badge {
+  font-size: 0.8rem;
+  padding: 0.5rem 0.75rem;
+}
+
+.comparativo-page .btn-lg {
+  padding: 0.75rem 2rem;
+  font-weight: 600;
+}
