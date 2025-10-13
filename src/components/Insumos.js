@@ -52,6 +52,7 @@ function Insumos() {
   const [searchTerm, setSearchTerm] = useState('');
   const [showHistorico, setShowHistorico] = useState(false);
   const [historicoData, setHistoricoData] = useState({ insumo: null, precos: [] });
+  const [composicoes, setComposicoes] = useState([]);
 
   const formatDateBR = (dateStr) => {
     if (!dateStr) return '-';
@@ -112,6 +113,7 @@ function Insumos() {
   useEffect(() => {
     if (currentUser) {
       fetchInsumos();
+      fetchComposicoes();
     }
   }, [currentUser]);
 
@@ -133,6 +135,24 @@ function Insumos() {
     } catch (error) {
       setError('Erro ao carregar insumos');
       console.error(error);
+    }
+  };
+
+  const fetchComposicoes = async () => {
+    try {
+      if (!currentUser) return;
+      const q = query(
+        collection(db, 'composicoes'), 
+        where('userId', '==', currentUser.uid)
+      );
+      const querySnapshot = await getDocs(q);
+      const composicoesData = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setComposicoes(composicoesData);
+    } catch (error) {
+      console.error('Erro ao carregar composições:', error);
     }
   };
 
@@ -287,11 +307,140 @@ function Insumos() {
     setShowModal(true);
   };
 
+  // Função para atualizar composições que usam um insumo deletado
+  const atualizarComposicoesSemInsumo = async (insumoId) => {
+    try {
+      const batch = writeBatch(db);
+      let composicoesAtualizadas = 0;
+      
+      // Usar o estado local de composições
+      composicoes.forEach(composicao => {
+        // Verificar se a composição usa o insumo deletado
+        if (composicao.insumos && Array.isArray(composicao.insumos)) {
+          const insumoUsado = composicao.insumos.find(item => item.insumoId === insumoId);
+          
+          if (insumoUsado) {
+            // Remover o insumo deletado da composição
+            const novosInsumos = composicao.insumos.filter(item => item.insumoId !== insumoId);
+            
+            // Recalcular o valor total da composição
+            let novoValorTotal = 0;
+            novosInsumos.forEach(item => {
+              const insumo = insumos.find(i => i.id === item.insumoId);
+              if (insumo) {
+                novoValorTotal += (parseFloat(item.quantidade) || 0) * (insumo.precoUnitario || 0);
+              }
+            });
+            
+            // Atualizar a composição
+            batch.update(doc(db, 'composicoes', composicao.id), {
+              insumos: novosInsumos,
+              valorTotal: novoValorTotal
+            });
+            
+            composicoesAtualizadas++;
+          }
+        }
+      });
+      
+      // Executar as atualizações em lote
+      if (composicoesAtualizadas > 0) {
+        await batch.commit();
+        console.log(`${composicoesAtualizadas} composições foram atualizadas após a deleção do insumo`);
+        
+        // Atualizar o estado local das composições
+        setComposicoes(prev => prev.map(comp => {
+          if (comp.insumos && Array.isArray(comp.insumos)) {
+            const insumoUsado = comp.insumos.find(item => item.insumoId === insumoId);
+            if (insumoUsado) {
+              const novosInsumos = comp.insumos.filter(item => item.insumoId !== insumoId);
+              let novoValorTotal = 0;
+              novosInsumos.forEach(item => {
+                const insumo = insumos.find(i => i.id === item.insumoId);
+                if (insumo) {
+                  novoValorTotal += (parseFloat(item.quantidade) || 0) * (insumo.precoUnitario || 0);
+                }
+              });
+              return {
+                ...comp,
+                insumos: novosInsumos,
+                valorTotal: novoValorTotal
+              };
+            }
+          }
+          return comp;
+        }));
+      }
+      
+    } catch (error) {
+      console.error('Erro ao atualizar composições após deleção do insumo:', error);
+    }
+  };
+
+  // Função para atualizar orçamentos que usam composições modificadas
+  const atualizarOrcamentosComComposicoes = async () => {
+    try {
+      // Buscar todos os orçamentos do usuário
+      const orcamentosRef = collection(db, 'orcamentos');
+      const orcamentosSnapshot = await getDocs(orcamentosRef);
+      
+      const batch = writeBatch(db);
+      let orcamentosAtualizados = 0;
+      
+      orcamentosSnapshot.docs.forEach(docSnap => {
+        const orcamento = docSnap.data();
+        
+        // Verificar se o orçamento tem composições
+        if (orcamento.composicoes && Array.isArray(orcamento.composicoes)) {
+          let valorTotalAtualizado = 0;
+          let composicoesModificadas = false;
+          
+          // Recalcular o valor total do orçamento baseado nas composições atualizadas
+          orcamento.composicoes.forEach(composicao => {
+            if (composicao.composicaoId) {
+              // Buscar a composição atualizada no estado local
+              const composicaoAtualizada = composicoes.find(c => c.id === composicao.composicaoId);
+              if (composicaoAtualizada) {
+                const valorComposicao = (composicaoAtualizada.valorTotal || 0) * (parseFloat(composicao.quantidade) || 1);
+                valorTotalAtualizado += valorComposicao;
+                composicoesModificadas = true;
+              }
+            }
+          });
+          
+          // Atualizar o orçamento se necessário
+          if (composicoesModificadas) {
+            batch.update(doc(db, 'orcamentos', docSnap.id), {
+              valorTotal: valorTotalAtualizado,
+              ultimaAtualizacaoEAP: new Date().toISOString()
+            });
+            orcamentosAtualizados++;
+          }
+        }
+      });
+      
+      // Executar as atualizações em lote
+      if (orcamentosAtualizados > 0) {
+        await batch.commit();
+        console.log(`${orcamentosAtualizados} orçamentos foram atualizados após a deleção do insumo`);
+      }
+      
+    } catch (error) {
+      console.error('Erro ao atualizar orçamentos após deleção do insumo:', error);
+    }
+  };
+
   const handleDelete = async (id) => {
-    if (window.confirm('Tem certeza que deseja excluir este insumo? Esta ação não pode ser desfeita.')) {
+    if (window.confirm('Tem certeza que deseja excluir este insumo? Esta ação irá:\n\n• Remover o insumo de todas as composições que o utilizam\n• Recalcular os valores das composições afetadas\n• Atualizar os orçamentos que usam essas composições\n\nEsta ação não pode ser desfeita.')) {
       try {
         setLoading(true);
         setError('');
+        
+        // Primeiro, atualizar todas as composições que usam este insumo
+        await atualizarComposicoesSemInsumo(id);
+        
+        // Depois, atualizar os orçamentos que usam essas composições
+        await atualizarOrcamentosComComposicoes();
         
         // Deletar a subcoleção de preços primeiro
         const precosRef = collection(db, 'insumos', id, 'precos');
@@ -312,7 +461,11 @@ function Insumos() {
           setEditingInsumo(null);
         }
         
+        // Recarregar as composições para refletir as mudanças
+        await fetchComposicoes();
+        
         setError('');
+        alert('Insumo deletado com sucesso! Todas as composições e orçamentos foram atualizados automaticamente.');
       } catch (error) {
         setError('Erro ao excluir insumo');
         console.error('Erro ao excluir insumo:', error);
