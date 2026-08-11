@@ -24,8 +24,9 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useAuth } from '../contexts/AuthContext';
-import { FaPlus, FaEdit, FaTrash, FaSearch, FaFileInvoiceDollar, FaEye, FaCopy } from 'react-icons/fa';
+import { FaPlus, FaEdit, FaTrash, FaSearch, FaFileInvoiceDollar, FaEye, FaCopy, FaSort, FaSortUp, FaSortDown, FaCodeBranch, FaArchive, FaList } from 'react-icons/fa';
 import { useNavigate } from 'react-router-dom';
+import { copiarEAPCompleta, formatRevisao, getObraId, getRevisao } from '../utils/eapCopy';
 
 function Orcamentos() {
   const { currentUser } = useAuth();
@@ -38,6 +39,8 @@ function Orcamentos() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+  const [sortConfig, setSortConfig] = useState({ key: null, direction: null });
+  const [mostrarObsoletos, setMostrarObsoletos] = useState(false);
   
   const [formData, setFormData] = useState({
     nome: '',
@@ -111,21 +114,22 @@ function Orcamentos() {
         console.log('Orçamento atualizado com sucesso');
         
       } else {
-        // NOVO: Criar orçamento com dados básicos
-        console.log('Criando novo orçamento');
-        
+        // NOVO: Criar orçamento com dados básicos (revisão 00)
+        const obraId = `obra_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         const orcamentoData = {
           ...formData,
           composicoes: [],
+          pacotes: [],
           userId: currentUser.uid,
           createdAt: new Date(),
           valorTotal: 0,
-          status: 'Em Análise'
+          status: 'Em Análise',
+          obraId,
+          revisao: 0,
+          revisaoTravada: false
         };
-        
-        console.log('Novo orçamento a ser criado:', orcamentoData);
+
         await addDoc(collection(db, 'orcamentos'), orcamentoData);
-        console.log('Novo orçamento criado com sucesso');
       }
 
       setShowModal(false);
@@ -200,142 +204,113 @@ function Orcamentos() {
     setShowCopyModal(true);
   };
 
+  const handleNovaRevisao = async (orcamento) => {
+    if (orcamento.revisaoTravada) {
+      setError('Esta revisão já está travada. Abra a revisão mais recente do projeto.');
+      return;
+    }
+
+    const ok = window.confirm(
+      `Criar nova revisão a partir da Rev. ${formatRevisao(getRevisao(orcamento))}?\n\n` +
+        'A revisão atual será travada (somente leitura) e uma nova revisão editável será criada com a mesma EAP.'
+    );
+    if (!ok) return;
+
+    setLoading(true);
+    setError('');
+    try {
+      const obraId = getObraId(orcamento);
+      const revisaoAtual = getRevisao(orcamento);
+
+      // Descobrir próxima revisão na família
+      const mesmaObra = orcamentos.filter((o) => getObraId(o) === obraId);
+      const maxRev = mesmaObra.reduce((max, o) => Math.max(max, getRevisao(o)), revisaoAtual);
+      const novaRevisao = maxRev + 1;
+
+      const eapCopiada = copiarEAPCompleta(orcamento.pacotes || [], orcamento.composicoes || []);
+
+      // Travar revisão atual
+      await updateDoc(doc(db, 'orcamentos', orcamento.id), {
+        revisaoTravada: true,
+        obraId,
+        revisao: revisaoAtual,
+        updatedAt: new Date()
+      });
+
+      const novoOrcamento = {
+        nome: orcamento.nome,
+        descricao: orcamento.descricao || '',
+        cliente: orcamento.cliente || '',
+        endereco: orcamento.endereco || '',
+        data: orcamento.data || new Date().toISOString().split('T')[0],
+        userId: currentUser.uid,
+        createdAt: new Date(),
+        valorTotal: orcamento.valorTotal || 0,
+        totaisPorCategoria: orcamento.totaisPorCategoria || null,
+        status: 'Em Análise',
+        obraId,
+        revisao: novaRevisao,
+        revisaoTravada: false,
+        revisaoOrigemId: orcamento.id,
+        pacotes: eapCopiada.pacotes,
+        composicoes: eapCopiada.composicoes,
+        bdiConfig: orcamento.bdiConfig ? { ...orcamento.bdiConfig } : null,
+        ultimaAtualizacaoEAP: new Date().toISOString()
+      };
+
+      const docRef = await addDoc(collection(db, 'orcamentos'), novoOrcamento);
+      await fetchOrcamentos();
+      navigate(`/orcamentos/${docRef.id}/eap`);
+    } catch (error) {
+      setError('Erro ao criar nova revisão: ' + error.message);
+      console.error(error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSubmitCopy = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError('');
 
     try {
-      // Buscar o orçamento original completo para copiar
       const orcamentoOriginal = orcamentos.find(o => o.id === orcamentoParaCopiar.id);
       
       if (!orcamentoOriginal) {
         throw new Error('Orçamento original não encontrado');
       }
 
-      console.log('Orçamento original:', orcamentoOriginal);
-      console.log('Pacotes originais:', orcamentoOriginal.pacotes);
-
-      // Função para copiar profundamente a estrutura da EAP
-      const copiarEAPCompleta = (pacotes, composicoesOriginais) => {
-        if (!pacotes || pacotes.length === 0) {
-          console.log('Nenhum pacote para copiar');
-          return [];
-        }
-        
-        console.log('Copiando pacotes:', pacotes);
-        console.log('Composições originais disponíveis:', composicoesOriginais);
-        
-        // Criar mapeamento de IDs antigos para novos
-        const mapeamentoIds = {
-          pacotes: {},
-          subgrupos: {},
-          composicoes: {}
-        };
-        
-        // Primeiro, copiar pacotes e subgrupos com novos IDs
-        const pacotesCopiados = pacotes.map(pacote => {
-          console.log('Copiando pacote:', pacote);
-          
-          const novoIdPacote = `pacote_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-          mapeamentoIds.pacotes[pacote.id] = novoIdPacote;
-          
-          const novoPacote = {
-            ...pacote,
-            id: novoIdPacote,
-            subgrupos: []
-          };
-
-          // Copiar subgrupos se existirem
-          if (pacote.subgrupos && pacote.subgrupos.length > 0) {
-            console.log('Copiando subgrupos do pacote:', pacote.subgrupos);
-            novoPacote.subgrupos = pacote.subgrupos.map(subgrupo => {
-              console.log('Copiando subgrupo:', subgrupo);
-              
-              const novoIdSubgrupo = `subgrupo_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-              mapeamentoIds.subgrupos[subgrupo.id] = novoIdSubgrupo;
-              
-              const novoSubgrupo = {
-                ...subgrupo,
-                id: novoIdSubgrupo
-              };
-
-              console.log('Subgrupo copiado:', novoSubgrupo);
-              return novoSubgrupo;
-            });
-          }
-
-          console.log('Pacote copiado:', novoPacote);
-          return novoPacote;
-        });
-        
-        // Agora copiar composições com novos IDs e referências atualizadas
-        const composicoesCopiadas = [];
-        if (composicoesOriginais && composicoesOriginais.length > 0) {
-          console.log('Copiando composições com novos IDs e referências:');
-          
-          composicoesOriginais.forEach(composicao => {
-            console.log('Copiando composição:', composicao);
-            
-            const novaComposicao = {
-              ...composicao,
-              composicaoId: `comp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-              // Atualizar referências para os novos IDs
-              pacoteId: mapeamentoIds.pacotes[composicao.pacoteId] || composicao.pacoteId,
-              subgrupoId: mapeamentoIds.subgrupos[composicao.subgrupoId] || composicao.subgrupoId
-            };
-            
-            console.log('Composição copiada:', novaComposicao);
-            composicoesCopiadas.push(novaComposicao);
-          });
-        }
-        
-        console.log('Mapeamento de IDs:', mapeamentoIds);
-        console.log('Composições copiadas:', composicoesCopiadas);
-        
-        return {
-          pacotes: pacotesCopiados,
-          composicoes: composicoesCopiadas
-        };
-      };
-
-      // Copiar a EAP completa com novos IDs
       const eapCopiada = copiarEAPCompleta(orcamentoOriginal.pacotes, orcamentoOriginal.composicoes);
-      console.log('EAP copiada:', eapCopiada);
+      const obraId = `obra_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-      // Criar novo orçamento com os dados do formulário
       const novoOrcamento = {
         ...copyFormData,
         userId: currentUser.uid,
         createdAt: new Date(),
-        valorTotal: 0,
+        valorTotal: orcamentoOriginal.valorTotal || 0,
+        totaisPorCategoria: orcamentoOriginal.totaisPorCategoria || null,
         status: 'Em Análise',
-        // Copiar a estrutura da EAP com novos IDs
+        obraId,
+        revisao: 0,
+        revisaoTravada: false,
         pacotes: eapCopiada.pacotes,
         composicoes: eapCopiada.composicoes,
         bdiConfig: orcamentoOriginal.bdiConfig ? { ...orcamentoOriginal.bdiConfig } : null
       };
 
-      console.log('Novo orçamento a ser criado:', novoOrcamento);
-
-      // Adicionar o novo orçamento
       const docRef = await addDoc(collection(db, 'orcamentos'), novoOrcamento);
-      console.log('Novo orçamento criado com ID:', docRef.id);
 
-      // Se o orçamento original tiver EAP, atualizar com a data da cópia
       if (eapCopiada.pacotes.length > 0) {
         await updateDoc(doc(db, 'orcamentos', docRef.id), {
-          ultimaAtualizacaoEAP: new Date()
+          ultimaAtualizacaoEAP: new Date().toISOString()
         });
-        console.log('Data de atualização da EAP definida');
       }
 
       setShowCopyModal(false);
       setOrcamentoParaCopiar(null);
       resetCopyForm();
       fetchOrcamentos();
-      
-      // Navegar para a EAP do novo orçamento
       navigate(`/orcamentos/${docRef.id}/eap`);
       
     } catch (error) {
@@ -346,10 +321,14 @@ function Orcamentos() {
     }
   };
 
-  const filteredOrcamentos = orcamentos.filter(orcamento =>
-    orcamento.nome.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    orcamento.cliente.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    orcamento.descricao.toLowerCase().includes(searchTerm.toLowerCase())
+  const orcamentosAtuais = orcamentos.filter((o) => !o.revisaoTravada);
+  const orcamentosObsoletos = orcamentos.filter((o) => !!o.revisaoTravada);
+  const listaBase = mostrarObsoletos ? orcamentosObsoletos : orcamentosAtuais;
+
+  const filteredOrcamentos = listaBase.filter((orcamento) =>
+    (orcamento.nome || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (orcamento.cliente || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (orcamento.descricao || '').toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const getStatusColor = (status) => {
@@ -406,6 +385,76 @@ function Orcamentos() {
     return orcamento.valorTotal * (1 + bdi);
   };
 
+  const toggleSort = (key) => {
+    setSortConfig((prev) => {
+      if (prev.key !== key) return { key, direction: 'asc' };
+      if (prev.direction === 'asc') return { key, direction: 'desc' };
+      return { key: null, direction: null };
+    });
+  };
+
+  const epochFromValue = (value) => {
+    if (!value) return 0;
+    if (typeof value === 'object' && value.seconds) return value.seconds * 1000;
+    const t = new Date(value).getTime();
+    return Number.isNaN(t) ? 0 : t;
+  };
+
+  const getSortValue = (orcamento, key) => {
+    switch (key) {
+      case 'nome':
+        return (orcamento.nome || '').toLowerCase();
+      case 'cliente':
+        return (orcamento.cliente || '').toLowerCase();
+      case 'data':
+        return epochFromValue(orcamento.data);
+      case 'ultimaAtualizacao':
+        return epochFromValue(orcamento.ultimaAtualizacaoEAP);
+      case 'valorTotal':
+        return calcularValorTotalComBDI(orcamento);
+      case 'status':
+        return (orcamento.status || '').toLowerCase();
+      case 'revisao':
+        return getRevisao(orcamento);
+      default:
+        return '';
+    }
+  };
+
+  const sortedOrcamentos = (() => {
+    if (!sortConfig.key || !sortConfig.direction) return filteredOrcamentos;
+    const list = [...filteredOrcamentos];
+    list.sort((a, b) => {
+      const va = getSortValue(a, sortConfig.key);
+      const vb = getSortValue(b, sortConfig.key);
+      let cmp = 0;
+      if (typeof va === 'number' && typeof vb === 'number') {
+        cmp = va - vb;
+      } else {
+        cmp = String(va).localeCompare(String(vb), 'pt-BR', { numeric: true, sensitivity: 'base' });
+      }
+      return sortConfig.direction === 'asc' ? cmp : -cmp;
+    });
+    return list;
+  })();
+
+  const renderSortIcon = (key) => {
+    if (sortConfig.key !== key) return <FaSort className="ms-1 text-muted" size={12} />;
+    if (sortConfig.direction === 'asc') return <FaSortUp className="ms-1" size={12} />;
+    return <FaSortDown className="ms-1" size={12} />;
+  };
+
+  const SortableTh = ({ columnKey, children }) => (
+    <th
+      onClick={() => toggleSort(columnKey)}
+      style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
+      title="Clique para ordenar"
+    >
+      {children}
+      {renderSortIcon(columnKey)}
+    </th>
+  );
+
   // Função para formatar o valor com informações do BDI
   const formatarValorComBDI = (orcamento) => {
     if (!orcamento.valorTotal || orcamento.valorTotal === 0) return 'R$ 0,00';
@@ -433,29 +482,62 @@ function Orcamentos() {
           <p className="text-muted">Crie e gerencie orçamentos para seus projetos</p>
         </div>
         <div className="d-flex gap-2">
-          <Button onClick={() => setShowModal(true)} variant="primary">
-            <FaPlus className="me-2" />
-            Novo Orçamento
-          </Button>
-          <Button 
-            onClick={() => setShowCopyModal(true)} 
-            variant="warning"
-            disabled={orcamentos.length === 0}
-            title={orcamentos.length === 0 ? "Não há orçamentos para copiar" : "Copiar um orçamento existente"}
+          {!mostrarObsoletos && (
+            <>
+              <Button onClick={() => setShowModal(true)} variant="primary">
+                <FaPlus className="me-2" />
+                Novo Orçamento
+              </Button>
+              <Button
+                onClick={() => setShowCopyModal(true)}
+                variant="warning"
+                disabled={orcamentosAtuais.length === 0}
+                title={orcamentosAtuais.length === 0 ? 'Não há orçamentos para copiar' : 'Copiar um orçamento existente'}
+              >
+                <FaCopy className="me-2" />
+                Copiar Orçamento
+              </Button>
+            </>
+          )}
+          <Button
+            variant={mostrarObsoletos ? 'primary' : 'outline-secondary'}
+            onClick={() => {
+              setMostrarObsoletos((v) => !v);
+              setSearchTerm('');
+              setSortConfig({ key: null, direction: null });
+            }}
+            title={mostrarObsoletos ? 'Voltar às revisões atuais' : 'Ver revisões anteriores (travadas)'}
           >
-            <FaCopy className="me-2" />
-            Copiar Orçamento
+            {mostrarObsoletos ? (
+              <><FaList className="me-2" />Atuais</>
+            ) : (
+              <>
+                <FaArchive className="me-2" />
+                Obsoletos
+                {orcamentosObsoletos.length > 0 && (
+                  <Badge bg="secondary" className="ms-2">{orcamentosObsoletos.length}</Badge>
+                )}
+              </>
+            )}
           </Button>
         </div>
       </div>
 
       {error && <Alert variant="danger">{error}</Alert>}
 
+      {mostrarObsoletos && (
+        <Alert variant="info" className="mb-3">
+          Revisões anteriores (travadas). Somente leitura — a revisão atual de cada projeto aparece na lista principal.
+        </Alert>
+      )}
+
       <Card>
         <Card.Header>
           <Row className="align-items-center">
             <Col>
-              <h5 className="mb-0">Lista de Orçamentos</h5>
+              <h5 className="mb-0">
+                {mostrarObsoletos ? 'Revisões obsoletas' : 'Lista de Orçamentos'}
+              </h5>
             </Col>
             <Col md={4}>
               <InputGroup>
@@ -464,7 +546,7 @@ function Orcamentos() {
                 </InputGroup.Text>
                 <Form.Control
                   type="text"
-                  placeholder="Buscar orçamentos..."
+                  placeholder={mostrarObsoletos ? 'Buscar obsoletos...' : 'Buscar orçamentos...'}
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
@@ -475,51 +557,86 @@ function Orcamentos() {
         <Card.Body>
           {filteredOrcamentos.length === 0 ? (
             <div className="text-center py-4">
-              <FaFileInvoiceDollar size={48} className="text-muted mb-3" />
-              <p className="text-muted">Nenhum orçamento encontrado</p>
-              <Button onClick={() => setShowModal(true)} variant="outline-primary">
-                Criar Primeiro Orçamento
-              </Button>
+              {mostrarObsoletos ? (
+                <>
+                  <FaArchive size={48} className="text-muted mb-3" />
+                  <p className="text-muted mb-0">Nenhuma revisão obsoleta encontrada</p>
+                  <p className="text-muted small">
+                    Ao criar uma nova revisão, a anterior fica travada e aparece aqui.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <FaFileInvoiceDollar size={48} className="text-muted mb-3" />
+                  <p className="text-muted">Nenhum orçamento encontrado</p>
+                  <Button onClick={() => setShowModal(true)} variant="outline-primary">
+                    Criar Primeiro Orçamento
+                  </Button>
+                </>
+              )}
             </div>
           ) : (
             <Table responsive hover>
               <thead>
                 <tr>
-                  <th>Nome</th>
-                  <th>Cliente</th>
-                  <th>Data</th>
-                  <th>Última atualização</th>
-                  <th>Valor Total (c/ BDI)</th>
-                  <th>Status</th>
+                  <SortableTh columnKey="nome">Nome</SortableTh>
+                  <SortableTh columnKey="revisao">Rev.</SortableTh>
+                  <SortableTh columnKey="cliente">Cliente</SortableTh>
+                  <SortableTh columnKey="data">Data</SortableTh>
+                  <SortableTh columnKey="ultimaAtualizacao">Última atualização</SortableTh>
+                  <SortableTh columnKey="valorTotal">Valor Total (c/ BDI)</SortableTh>
+                  <SortableTh columnKey="status">Status</SortableTh>
                   <th>Ações</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredOrcamentos.map((orcamento) => (
+                {sortedOrcamentos.map((orcamento) => (
                   <tr key={orcamento.id}>
-                    <td><strong>{orcamento.nome}</strong></td>
+                    <td>
+                      <strong>{orcamento.nome}</strong>
+                      {orcamento.revisaoTravada && (
+                        <div><small className="text-muted">Revisão travada (somente leitura)</small></div>
+                      )}
+                    </td>
+                    <td>
+                      <Badge bg={orcamento.revisaoTravada ? 'secondary' : 'primary'}>
+                        {formatRevisao(getRevisao(orcamento))}
+                      </Badge>
+                    </td>
                     <td>{orcamento.cliente}</td>
                     <td>{formatarData(orcamento.data)}</td>
                     <td>{formatarUltimaAtualizacao(orcamento.ultimaAtualizacaoEAP)}</td>
                     <td>
                       {(() => {
                         const valorFormatado = formatarValorComBDI(orcamento);
-                        if (typeof valorFormatado === 'string') {
-                          return <div className="fw-bold">{valorFormatado}</div>;
-                        }
+                        const cats = orcamento.totaisPorCategoria;
                         return (
                           <div>
-                            <div className="fw-bold text-success">
-                              R$ {valorFormatado.valorComBDI.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                            </div>
-                            <small className="text-muted">
-                              Base: R$ {valorFormatado.valorBase.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                            </small>
-                            <br />
-                            <small className="text-success">
-                              <span className="badge bg-success me-1">BDI</span>
-                              +{valorFormatado.bdiPercentual.toFixed(1)}%
-                            </small>
+                            {typeof valorFormatado === 'string' ? (
+                              <div className="fw-bold">{valorFormatado}</div>
+                            ) : (
+                              <>
+                                <div className="fw-bold text-success">
+                                  R$ {valorFormatado.valorComBDI.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                </div>
+                                <small className="text-muted">
+                                  Base: R$ {valorFormatado.valorBase.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                </small>
+                                <br />
+                                <small className="text-success">
+                                  <span className="badge bg-success me-1">BDI</span>
+                                  +{valorFormatado.bdiPercentual.toFixed(1)}%
+                                </small>
+                              </>
+                            )}
+                            {cats && (
+                              <div className="small text-muted mt-1" style={{ fontVariantNumeric: 'tabular-nums', lineHeight: 1.4 }}>
+                                <div>Mat: R$ {(cats.Material || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
+                                <div>MO: R$ {(cats['Mão de Obra'] || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
+                                <div>Eq: R$ {(cats.Equipamento || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
+                                <div>Serv: R$ {(cats.Serviço || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
+                              </div>
+                            )}
                           </div>
                         );
                       })()}
@@ -539,6 +656,18 @@ function Orcamentos() {
                       >
                         <FaEye />
                       </Button>
+                      {!orcamento.revisaoTravada && (
+                        <Button
+                          size="sm"
+                          variant="outline-success"
+                          className="me-2"
+                          onClick={() => handleNovaRevisao(orcamento)}
+                          disabled={loading}
+                          title="Nova revisão"
+                        >
+                          <FaCodeBranch />
+                        </Button>
+                      )}
                       <Button
                         size="sm"
                         variant="outline-warning"
@@ -548,18 +677,22 @@ function Orcamentos() {
                       >
                         <FaCopy />
                       </Button>
-                      <Button
-                        size="sm"
-                        variant="outline-primary"
-                        className="me-2"
-                        onClick={() => handleEdit(orcamento)}
-                      >
-                        <FaEdit />
-                      </Button>
+                      {!orcamento.revisaoTravada && (
+                        <Button
+                          size="sm"
+                          variant="outline-primary"
+                          className="me-2"
+                          onClick={() => handleEdit(orcamento)}
+                          title="Editar"
+                        >
+                          <FaEdit />
+                        </Button>
+                      )}
                       <Button
                         size="sm"
                         variant="outline-danger"
                         onClick={() => handleDelete(orcamento.id)}
+                        title="Excluir"
                       >
                         <FaTrash />
                       </Button>
@@ -687,9 +820,9 @@ function Orcamentos() {
                   required
                 >
                   <option value="">Escolha um orçamento...</option>
-                  {orcamentos.map(orcamento => (
+                  {orcamentosAtuais.map((orcamento) => (
                     <option key={orcamento.id} value={orcamento.id}>
-                      {orcamento.nome} - {orcamento.cliente}
+                      {orcamento.nome} — Rev. {formatRevisao(getRevisao(orcamento))} — {orcamento.cliente}
                     </option>
                   ))}
                 </Form.Select>
@@ -705,16 +838,7 @@ function Orcamentos() {
                     <small>
                       Este orçamento possui EAP com {orcamentoParaCopiar.pacotes.length} pacote(s) que serão copiados.
                       {(() => {
-                        let totalComposicoes = 0;
-                        orcamentoParaCopiar.pacotes.forEach(pacote => {
-                          if (pacote.subgrupos) {
-                            pacote.subgrupos.forEach(subgrupo => {
-                              if (subgrupo.composicoes) {
-                                totalComposicoes += subgrupo.composicoes.length;
-                              }
-                            });
-                          }
-                        });
+                        const totalComposicoes = (orcamentoParaCopiar.composicoes || []).length;
                         return totalComposicoes > 0 ? ` Total de ${totalComposicoes} composição(ões) incluídas.` : '';
                       })()}
                     </small>

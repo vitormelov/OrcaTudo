@@ -9,7 +9,11 @@ import {
   Row, 
   Col,
   InputGroup,
-  ListGroup
+  ListGroup,
+  Tabs,
+  Tab,
+  Spinner,
+  Badge
 } from 'react-bootstrap';
 import { 
   collection, 
@@ -19,11 +23,12 @@ import {
   deleteDoc, 
   doc, 
   query, 
-  where
+  where,
+  writeBatch
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useAuth } from '../contexts/AuthContext';
-import { FaPlus, FaEdit, FaTrash, FaSearch, FaLayerGroup, FaBoxes } from 'react-icons/fa';
+import { FaPlus, FaEdit, FaTrash, FaSearch, FaLayerGroup, FaBoxes, FaDatabase, FaTimes, FaCheck } from 'react-icons/fa';
 
 function Composicoes() {
   const { currentUser } = useAuth();
@@ -34,8 +39,20 @@ function Composicoes() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+  const [activeTab, setActiveTab] = useState('minhas');
+  const [seinfraCatalog, setSeinfraCatalog] = useState([]);
+  const [seinfraLoading, setSeinfraLoading] = useState(false);
+  const [seinfraSearch, setSeinfraSearch] = useState('');
+  const [seinfraError, setSeinfraError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
+  const [showSeinfraModal, setShowSeinfraModal] = useState(false);
+  const [seinfraItem, setSeinfraItem] = useState(null);
+  const [addingCodigo, setAddingCodigo] = useState(null);
+  const [deleteMode, setDeleteMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState([]);
   
   const [formData, setFormData] = useState({
+    codigo: '',
     nome: '',
     unidade: '',
     insumos: [] // {insumoId, quantidade}
@@ -133,10 +150,221 @@ function Composicoes() {
       }));
       insumosData.sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR'));
       setInsumos(insumosData);
+      return insumosData;
     } catch (error) {
       console.error('Erro ao carregar insumos:', error);
+      return [];
     }
   };
+
+  const loadSeinfraCatalog = async () => {
+    if (seinfraCatalog.length > 0 || seinfraLoading) return;
+    setSeinfraLoading(true);
+    setSeinfraError('');
+    try {
+      const response = await fetch('/composicoes/seinfra.json');
+      if (!response.ok) throw new Error('Não foi possível carregar o catálogo SEINFRA de composições');
+      const data = await response.json();
+      setSeinfraCatalog(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error(err);
+      setSeinfraError(err.message || 'Erro ao carregar catálogo SEINFRA');
+    } finally {
+      setSeinfraLoading(false);
+    }
+  };
+
+  const handleTabSelect = (key) => {
+    setActiveTab(key);
+    setSuccessMessage('');
+    setError('');
+    setDeleteMode(false);
+    setSelectedIds([]);
+    if (key === 'seinfra') {
+      loadSeinfraCatalog();
+    }
+  };
+
+  const jaAdicionada = (codigo) =>
+    composicoes.some(
+      (c) => (c.codigo || '').toString().toLowerCase() === String(codigo).toLowerCase()
+    );
+
+  const abrirAdicionarSeinfra = (item) => {
+    if (jaAdicionada(item.codigo)) {
+      setError(`A composição "${item.codigo}" já está nas suas composições.`);
+      setSuccessMessage('');
+      return;
+    }
+    setSeinfraItem(item);
+    setShowSeinfraModal(true);
+    setError('');
+  };
+
+  const garantirInsumosSeinfra = async (itensSeinfra, insumosAtuais) => {
+    const byCodigo = new Map(
+      insumosAtuais
+        .filter((i) => i.codigo)
+        .map((i) => [String(i.codigo).toLowerCase(), i])
+    );
+
+    const hojeStr = new Date().toISOString().split('T')[0];
+    const agora = new Date();
+    const criados = [];
+    const faltantes = [];
+
+    for (const item of itensSeinfra) {
+      const key = String(item.codigo).toLowerCase();
+      if (!byCodigo.has(key)) {
+        faltantes.push(item);
+      }
+    }
+
+    // Criar insumos primeiro e preços depois.
+    // As regras do Firestore usam get(pai) na subcoleção precos;
+    // no mesmo batch o pai ainda não existe e a criação falha com permissions.
+    const CHUNK = 400;
+    for (let i = 0; i < faltantes.length; i += CHUNK) {
+      const slice = faltantes.slice(i, i + CHUNK);
+      const batchInsumos = writeBatch(db);
+      const refs = [];
+
+      slice.forEach((item) => {
+        const insumoRef = doc(collection(db, 'insumos'));
+        const data = {
+          codigo: item.codigo,
+          nome: item.nome,
+          categoria: item.categoria || 'Material',
+          unidade: item.unidade,
+          precoUnitario: parseFloat(item.precoUnitario) || 0,
+          data: hojeStr,
+          empresa: 'SEINFRA',
+          fonte: 'SEINFRA',
+          userId: currentUser.uid,
+          createdAt: agora,
+          updatedAt: agora
+        };
+        batchInsumos.set(insumoRef, data);
+        refs.push({ id: insumoRef.id, ...data });
+      });
+
+      await batchInsumos.commit();
+
+      const batchPrecos = writeBatch(db);
+      refs.forEach((r) => {
+        const precoRef = doc(collection(db, 'insumos', r.id, 'precos'));
+        batchPrecos.set(precoRef, {
+          preco: r.precoUnitario,
+          data: hojeStr,
+          empresa: 'SEINFRA',
+          createdAt: agora
+        });
+      });
+      await batchPrecos.commit();
+
+      refs.forEach((r) => {
+        byCodigo.set(String(r.codigo).toLowerCase(), r);
+        criados.push(r);
+      });
+    }
+
+    return { byCodigo, criados };
+  };
+
+  const confirmarAdicionarSeinfra = async () => {
+    if (!seinfraItem || !currentUser) return;
+    setAddingCodigo(seinfraItem.codigo);
+    setLoading(true);
+    setError('');
+    setSuccessMessage('');
+
+    try {
+      const insumosAtuais = insumos.length ? insumos : await fetchInsumos();
+      const { byCodigo, criados } = await garantirInsumosSeinfra(
+        seinfraItem.insumos || [],
+        insumosAtuais
+      );
+
+      const insumosComposicao = [];
+      const faltou = [];
+
+      (seinfraItem.insumos || []).forEach((item) => {
+        const found = byCodigo.get(String(item.codigo).toLowerCase());
+        if (!found) {
+          faltou.push(item.codigo);
+          return;
+        }
+        insumosComposicao.push({
+          insumoId: found.id,
+          quantidade: parseFloat(item.quantidade) || 0
+        });
+      });
+
+      if (faltou.length) {
+        throw new Error(`Não foi possível vincular os insumos: ${faltou.join(', ')}`);
+      }
+
+      const valorRecalc = insumosComposicao.reduce((sum, item) => {
+        const byId = [...byCodigo.values()].find((i) => i.id === item.insumoId);
+        return sum + (parseFloat(item.quantidade) || 0) * (byId?.precoUnitario || 0);
+      }, 0);
+
+      await addDoc(collection(db, 'composicoes'), {
+        codigo: seinfraItem.codigo,
+        nome: seinfraItem.nome,
+        unidade: seinfraItem.unidade,
+        insumos: insumosComposicao,
+        insumoIds: insumosComposicao.map((i) => i.insumoId),
+        valorTotal:
+          typeof seinfraItem.valorTotal === 'number' && seinfraItem.valorTotal > 0
+            ? seinfraItem.valorTotal
+            : valorRecalc,
+        empresa: 'SEINFRA',
+        fonte: 'SEINFRA',
+        userId: currentUser.uid,
+        createdAt: new Date()
+      });
+
+      if (criados.length) {
+        setInsumos((prev) =>
+          [...prev, ...criados].sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR'))
+        );
+      }
+
+      setShowSeinfraModal(false);
+      setSeinfraItem(null);
+      const msgExtras =
+        criados.length > 0
+          ? ` ${criados.length} insumo(s) SEINFRA também foram cadastrados.`
+          : '';
+      setSuccessMessage(`Composição "${seinfraItem.codigo}" adicionada.${msgExtras}`);
+      await fetchComposicoes();
+      await fetchInsumos();
+    } catch (err) {
+      console.error(err);
+      setError(`Erro ao adicionar composição SEINFRA: ${err.message}`);
+    } finally {
+      setLoading(false);
+      setAddingCodigo(null);
+    }
+  };
+
+  const filteredSeinfra = (() => {
+    const termo = seinfraSearch.trim().toLowerCase();
+    if (!termo) return [];
+    const matches = [];
+    for (let i = 0; i < seinfraCatalog.length; i++) {
+      const item = seinfraCatalog[i];
+      if (
+        item.codigo.toLowerCase().includes(termo) ||
+        item.nome.toLowerCase().includes(termo)
+      ) {
+        matches.push(item);
+        if (matches.length >= 80) break;
+      }
+    }
+    return matches;
+  })();
 
   const getInsumoById = (id) => insumos.find(i => i.id === id);
 
@@ -155,6 +383,13 @@ function Composicoes() {
     setError('');
 
     try {
+      // Validar código obrigatório
+      if (!formData.codigo || !formData.codigo.trim()) {
+        setError('O código da composição é obrigatório.');
+        setLoading(false);
+        return;
+      }
+
       // Verificar se já existe uma composição com o mesmo nome
       const nomeNormalizado = formData.nome.trim().toLowerCase();
       const composicaoExistente = composicoes.find(composicao => 
@@ -176,6 +411,7 @@ function Composicoes() {
       }
 
       const composicaoData = {
+        codigo: formData.codigo.trim(),
         nome: formData.nome.trim(),
         unidade: formData.unidade,
         insumos: formData.insumos || [],
@@ -210,6 +446,7 @@ function Composicoes() {
       quantidade: item.quantidade ?? item.qtd ?? ''
     })).filter(i => i.insumoId);
     setFormData({
+      codigo: composicao.codigo || '',
       nome: composicao.nome || '',
       unidade: composicao.unidade || '',
       insumos: normalizedInsumos
@@ -217,20 +454,74 @@ function Composicoes() {
     setShowModal(true);
   };
 
-  const handleDelete = async (id) => {
-    if (window.confirm('Tem certeza que deseja excluir esta composição?')) {
-      try {
-        await deleteDoc(doc(db, 'composicoes', id));
-        fetchComposicoes();
-      } catch (error) {
-        setError('Erro ao excluir composição');
-        console.error(error);
+  const entrarModoExclusao = () => {
+    setDeleteMode(true);
+    setSelectedIds([]);
+    setError('');
+    setSuccessMessage('');
+  };
+
+  const cancelarModoExclusao = () => {
+    setDeleteMode(false);
+    setSelectedIds([]);
+  };
+
+  const toggleSelectId = (id) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const toggleSelectAllVisible = () => {
+    const visibleIds = filteredComposicoes.map((c) => c.id);
+    const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id));
+    if (allSelected) {
+      setSelectedIds((prev) => prev.filter((id) => !visibleIds.includes(id)));
+    } else {
+      setSelectedIds((prev) => [...new Set([...prev, ...visibleIds])]);
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.length === 0) {
+      setError('Selecione ao menos uma composição para excluir.');
+      return;
+    }
+
+    const ok = window.confirm(
+      `Tem certeza que deseja excluir ${selectedIds.length} composição(ões)?\n\nEsta ação não pode ser desfeita.`
+    );
+    if (!ok) return;
+
+    try {
+      setLoading(true);
+      setError('');
+
+      const CHUNK = 400;
+      for (let i = 0; i < selectedIds.length; i += CHUNK) {
+        const slice = selectedIds.slice(i, i + CHUNK);
+        const batch = writeBatch(db);
+        slice.forEach((id) => batch.delete(doc(db, 'composicoes', id)));
+        await batch.commit();
       }
+
+      setComposicoes((prev) => prev.filter((c) => !selectedIds.includes(c.id)));
+      if (editingComposicao && selectedIds.includes(editingComposicao.id)) {
+        setEditingComposicao(null);
+      }
+      setSuccessMessage(`${selectedIds.length} composição(ões) excluída(s) com sucesso.`);
+      cancelarModoExclusao();
+    } catch (error) {
+      setError('Erro ao excluir composições');
+      console.error(error);
+    } finally {
+      setLoading(false);
     }
   };
 
   const resetForm = () => {
     setFormData({
+      codigo: '',
       nome: '',
       unidade: '',
       insumos: []
@@ -292,14 +583,22 @@ function Composicoes() {
 
   const calcularValorTotal = () => calcularValorTotalAtual(formData.insumos);
 
-  const filteredComposicoes = composicoes.filter(composicao =>
-    (composicao.nome || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (composicao.unidade || '').toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredComposicoes = composicoes.filter(composicao => {
+    const termo = searchTerm.toLowerCase();
+    return (
+      (composicao.codigo || '').toString().toLowerCase().includes(termo) ||
+      (composicao.nome || '').toLowerCase().includes(termo) ||
+      (composicao.unidade || '').toLowerCase().includes(termo)
+    );
+  });
 
-  const insumosFiltrados = insumos.filter(insumo =>
-    insumo.nome.toLowerCase().includes(insumoSearchTerm.toLowerCase())
-  );
+  const insumosFiltrados = insumos.filter(insumo => {
+    const termo = insumoSearchTerm.toLowerCase();
+    return (
+      (insumo.codigo || '').toString().toLowerCase().includes(termo) ||
+      insumo.nome.toLowerCase().includes(termo)
+    );
+  });
 
   return (
     <div>
@@ -308,86 +607,242 @@ function Composicoes() {
           <h1><FaLayerGroup className="me-2" />Composições</h1>
           <p className="text-muted">Crie composições combinando insumos para serviços específicos</p>
         </div>
-        <Button onClick={() => setShowModal(true)} variant="primary">
-          <FaPlus className="me-2" />
-          Nova Composição
-        </Button>
+        {activeTab === 'minhas' && (
+          <div className="d-flex gap-2">
+            {deleteMode ? (
+              <>
+                <Button variant="outline-secondary" onClick={cancelarModoExclusao} disabled={loading}>
+                  <FaTimes className="me-2" />
+                  Cancelar
+                </Button>
+                <Button
+                  variant="danger"
+                  onClick={handleBulkDelete}
+                  disabled={loading || selectedIds.length === 0}
+                >
+                  <FaCheck className="me-2" />
+                  {loading ? 'Excluindo...' : `Confirmar exclusão (${selectedIds.length})`}
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="outline-danger" onClick={entrarModoExclusao}>
+                  <FaTrash className="me-2" />
+                  Excluir
+                </Button>
+                <Button onClick={() => setShowModal(true)} variant="primary">
+                  <FaPlus className="me-2" />
+                  Nova Composição
+                </Button>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
-      {error && <Alert variant="danger">{error}</Alert>}
+      {error && <Alert variant="danger" onClose={() => setError('')} dismissible>{error}</Alert>}
+      {successMessage && <Alert variant="success" onClose={() => setSuccessMessage('')} dismissible>{successMessage}</Alert>}
 
-      <Card>
-        <Card.Header>
-          <Row className="align-items-center">
-            <Col>
-              <h5 className="mb-0">Lista de Composições</h5>
-            </Col>
-            <Col md={4}>
-              <InputGroup>
-                <InputGroup.Text>
-                  <FaSearch />
-                </InputGroup.Text>
-                <Form.Control
-                  type="text"
-                  placeholder="Buscar composições..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                />
-              </InputGroup>
-            </Col>
-          </Row>
-        </Card.Header>
-        <Card.Body>
-          {filteredComposicoes.length === 0 ? (
-            <div className="text-center py-4">
-              <FaLayerGroup size={48} className="text-muted mb-3" />
-              <p className="text-muted">Nenhuma composição encontrada</p>
-              <Button onClick={() => setShowModal(true)} variant="outline-primary">
-                Criar Primeira Composição
-              </Button>
-            </div>
-          ) : (
-            <Table responsive hover>
-              <thead>
-                <tr>
-                  <th style={{width: '40%'}}>Nome</th>
-                  <th style={{width: '15%'}}>Unidade</th>
-                  <th style={{width: '15%'}}>Insumos</th>
-                  <th style={{width: '15%'}}>Valor Total</th>
-                  <th style={{width: '15%'}}>Ações</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredComposicoes.map((composicao) => (
-                  <tr key={composicao.id}>
-                    <td style={{width: '40%'}}><strong>{composicao.nome}</strong></td>
-                    <td style={{width: '15%'}}>{composicao.unidade}</td>
-                    <td style={{width: '15%'}}>{composicao.insumos?.length || 0} insumos</td>
-                    <td style={{width: '15%'}}>R$ {composicao.valorTotal?.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) || '0,00'}</td>
-                    <td style={{width: '15%'}}>
-                      <Button
-                        size="sm"
-                        variant="outline-primary"
-                        className="me-2"
-                        onClick={() => handleEdit(composicao)}
+      <Tabs activeKey={activeTab} onSelect={handleTabSelect} className="mb-3">
+        <Tab eventKey="minhas" title="Minhas Composições">
+          <Card>
+            <Card.Header>
+              <Row className="align-items-center">
+                <Col>
+                  <h5 className="mb-0">Lista de Composições</h5>
+                  {deleteMode && (
+                    <small className="text-danger">Selecione as composições que deseja excluir</small>
+                  )}
+                </Col>
+                <Col md={4}>
+                  <InputGroup>
+                    <InputGroup.Text>
+                      <FaSearch />
+                    </InputGroup.Text>
+                    <Form.Control
+                      type="text"
+                      placeholder="Buscar composições..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                    />
+                  </InputGroup>
+                </Col>
+              </Row>
+            </Card.Header>
+            <Card.Body>
+              {filteredComposicoes.length === 0 ? (
+                <div className="text-center py-4">
+                  <FaLayerGroup size={48} className="text-muted mb-3" />
+                  <p className="text-muted">Nenhuma composição encontrada</p>
+                  <Button onClick={() => setShowModal(true)} variant="outline-primary">
+                    Criar Primeira Composição
+                  </Button>
+                </div>
+              ) : (
+                <Table responsive hover>
+                  <thead>
+                    <tr>
+                      {deleteMode && (
+                        <th style={{ width: 40 }}>
+                          <Form.Check
+                            type="checkbox"
+                            checked={
+                              filteredComposicoes.length > 0 &&
+                              filteredComposicoes.every((c) => selectedIds.includes(c.id))
+                            }
+                            onChange={toggleSelectAllVisible}
+                            title="Selecionar todos visíveis"
+                          />
+                        </th>
+                      )}
+                      <th style={{width: '10%'}}>Código</th>
+                      <th style={{width: '35%'}}>Nome</th>
+                      <th style={{width: '15%'}}>Unidade</th>
+                      <th style={{width: '15%'}}>Insumos</th>
+                      <th style={{width: '15%'}}>Valor Total</th>
+                      {!deleteMode && <th style={{width: '10%'}}>Ações</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredComposicoes.map((composicao) => (
+                      <tr
+                        key={composicao.id}
+                        onClick={() => {
+                          if (deleteMode) toggleSelectId(composicao.id);
+                        }}
+                        style={{ cursor: deleteMode ? 'pointer' : undefined }}
+                        className={selectedIds.includes(composicao.id) ? 'table-danger' : ''}
                       >
-                        <FaEdit />
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline-danger"
-                        onClick={() => handleDelete(composicao.id)}
-                      >
-                        <FaTrash />
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </Table>
-          )}
-        </Card.Body>
-      </Card>
+                        {deleteMode && (
+                          <td onClick={(e) => e.stopPropagation()}>
+                            <Form.Check
+                              type="checkbox"
+                              checked={selectedIds.includes(composicao.id)}
+                              onChange={() => toggleSelectId(composicao.id)}
+                            />
+                          </td>
+                        )}
+                        <td style={{width: '10%'}}>{composicao.codigo || '-'}</td>
+                        <td style={{width: '35%'}}><strong>{composicao.nome}</strong></td>
+                        <td style={{width: '15%'}}>{composicao.unidade}</td>
+                        <td style={{width: '15%'}}>{composicao.insumos?.length || 0} insumos</td>
+                        <td style={{width: '15%'}}>R$ {composicao.valorTotal?.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) || '0,00'}</td>
+                        {!deleteMode && (
+                          <td style={{width: '10%'}}>
+                            <Button
+                              size="sm"
+                              variant="outline-primary"
+                              onClick={() => handleEdit(composicao)}
+                            >
+                              <FaEdit />
+                            </Button>
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </Table>
+              )}
+            </Card.Body>
+          </Card>
+        </Tab>
+
+        <Tab eventKey="seinfra" title={<span><FaDatabase className="me-1" />Catálogo SEINFRA</span>}>
+          <Card>
+            <Card.Header>
+              <Row className="align-items-center">
+                <Col>
+                  <h5 className="mb-0">Composições SEINFRA</h5>
+                  <small className="text-muted">
+                    Busque e adicione composições da tabela oficial
+                    {seinfraCatalog.length > 0 ? ` (${seinfraCatalog.length.toLocaleString('pt-BR')} itens)` : ''}
+                  </small>
+                </Col>
+                <Col md={5}>
+                  <InputGroup>
+                    <InputGroup.Text>
+                      <FaSearch />
+                    </InputGroup.Text>
+                    <Form.Control
+                      type="text"
+                      placeholder="Buscar por código ou descrição..."
+                      value={seinfraSearch}
+                      onChange={(e) => setSeinfraSearch(e.target.value)}
+                    />
+                  </InputGroup>
+                </Col>
+              </Row>
+            </Card.Header>
+            <Card.Body>
+              {seinfraError && <Alert variant="danger">{seinfraError}</Alert>}
+              {seinfraLoading ? (
+                <div className="text-center py-5">
+                  <Spinner animation="border" />
+                  <p className="text-muted mt-3 mb-0">Carregando catálogo SEINFRA...</p>
+                </div>
+              ) : !seinfraSearch.trim() ? (
+                <div className="text-center py-4">
+                  <FaDatabase size={48} className="text-muted mb-3" />
+                  <p className="text-muted mb-0">Digite um código ou parte da descrição para buscar no catálogo.</p>
+                </div>
+              ) : filteredSeinfra.length === 0 ? (
+                <div className="text-center py-4">
+                  <p className="text-muted mb-0">Nenhum item encontrado para &quot;{seinfraSearch}&quot;</p>
+                </div>
+              ) : (
+                <>
+                  <p className="text-muted small mb-2">
+                    Mostrando até 80 resultados. Refine a busca se necessário.
+                  </p>
+                  <Table responsive hover>
+                    <thead>
+                      <tr>
+                        <th>Código</th>
+                        <th>Descrição</th>
+                        <th>Unidade</th>
+                        <th>Insumos</th>
+                        <th>Valor Geral</th>
+                        <th>Ação</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredSeinfra.map((item) => {
+                        const adicionada = jaAdicionada(item.codigo);
+                        return (
+                          <tr key={item.codigo}>
+                            <td>{item.codigo}</td>
+                            <td><strong>{item.nome}</strong></td>
+                            <td>{item.unidade}</td>
+                            <td>{item.insumos?.length || 0}</td>
+                            <td>
+                              R$ {(item.valorTotal || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            </td>
+                            <td>
+                              {adicionada ? (
+                                <Badge bg="success">Já adicionada</Badge>
+                              ) : (
+                                <Button
+                                  size="sm"
+                                  variant="outline-primary"
+                                  disabled={addingCodigo === item.codigo || loading}
+                                  onClick={() => abrirAdicionarSeinfra(item)}
+                                >
+                                  <FaPlus className="me-1" />
+                                  Adicionar
+                                </Button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </Table>
+                </>
+              )}
+            </Card.Body>
+          </Card>
+        </Tab>
+      </Tabs>
 
       {/* Modal para Adicionar/Editar Composição */}
       <Modal show={showModal} onHide={() => {
@@ -402,14 +857,15 @@ function Composicoes() {
         </Modal.Header>
         <Form onSubmit={handleSubmit}>
           <Modal.Body>
+            {/* Linha 1: Código + Unidade (conforme pedido) */}
             <Row>
-              <Col md={8}>
+              <Col md={4}>
                 <Form.Group className="mb-3">
-                  <Form.Label>Nome *</Form.Label>
+                  <Form.Label>Código *</Form.Label>
                   <Form.Control
                     type="text"
-                    value={formData.nome}
-                    onChange={(e) => setFormData({...formData, nome: e.target.value})}
+                    value={formData.codigo}
+                    onChange={(e) => setFormData({ ...formData, codigo: e.target.value })}
                     required
                   />
                 </Form.Group>
@@ -427,6 +883,21 @@ function Composicoes() {
                       <option key={un} value={un}>{un}</option>
                     ))}
                   </Form.Select>
+                </Form.Group>
+              </Col>
+            </Row>
+
+            {/* Linha 2: Nome com mais espaço */}
+            <Row>
+              <Col md={12}>
+                <Form.Group className="mb-3">
+                  <Form.Label>Nome *</Form.Label>
+                  <Form.Control
+                    type="text"
+                    value={formData.nome}
+                    onChange={(e) => setFormData({...formData, nome: e.target.value})}
+                    required
+                  />
                 </Form.Group>
               </Col>
             </Row>
@@ -605,6 +1076,72 @@ function Composicoes() {
             </Button>
           </Modal.Footer>
         </Form>
+      </Modal>
+
+      {/* Modal: confirmar adição SEINFRA */}
+      <Modal show={showSeinfraModal} onHide={() => { setShowSeinfraModal(false); setSeinfraItem(null); }} size="lg">
+        <Modal.Header closeButton>
+          <Modal.Title>Adicionar composição SEINFRA</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          {seinfraItem && (
+            <>
+              <p className="mb-1"><strong>Código:</strong> {seinfraItem.codigo}</p>
+              <p className="mb-1"><strong>Descrição:</strong> {seinfraItem.nome}</p>
+              <p className="mb-1"><strong>Unidade:</strong> {seinfraItem.unidade}</p>
+              <p className="mb-3">
+                <strong>Valor Geral:</strong>{' '}
+                R$ {(seinfraItem.valorTotal || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              </p>
+              <p className="text-muted small">
+                Ao adicionar, os insumos desta composição que ainda não estiverem cadastrados
+                serão criados automaticamente (empresa SEINFRA).
+              </p>
+              <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+                <Table size="sm" responsive>
+                  <thead>
+                    <tr>
+                      <th>Código</th>
+                      <th>Insumo</th>
+                      <th>Cat.</th>
+                      <th>Qtd</th>
+                      <th>Preço</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(seinfraItem.insumos || []).map((ins) => {
+                      const existe = insumos.some(
+                        (i) => (i.codigo || '').toString().toLowerCase() === String(ins.codigo).toLowerCase()
+                      );
+                      return (
+                        <tr key={`${ins.codigo}-${ins.nome}`}>
+                          <td>
+                            {ins.codigo}{' '}
+                            {!existe && <Badge bg="warning" text="dark">novo</Badge>}
+                          </td>
+                          <td>{ins.nome}</td>
+                          <td>{ins.categoria}</td>
+                          <td>{ins.quantidade}</td>
+                          <td>
+                            R$ {(ins.precoUnitario || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </Table>
+              </div>
+            </>
+          )}
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={() => { setShowSeinfraModal(false); setSeinfraItem(null); }}>
+            Cancelar
+          </Button>
+          <Button variant="primary" disabled={loading} onClick={confirmarAdicionarSeinfra}>
+            {loading ? 'Adicionando...' : 'Adicionar às minhas composições'}
+          </Button>
+        </Modal.Footer>
       </Modal>
     </div>
   );

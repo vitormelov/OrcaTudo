@@ -1,0 +1,63 @@
+/* Design System — cores e tipografia (OrcaTudo) */
+:root {
+  /* Cores principais */
+  --color-primary: #17324D;
+  --color-primary-hover: #2F6B8A;
+  --color-accent: #F2B84B;
+  --color-accent-hover: #DFA63B;
+
+  /* Semânticas */
+  --color-success: #3FA66B;
+  --color-warning: #E89B3D;
+  --color-danger: #D9534F;
+  --color-info: #5B9BD5;
+
+  /* Neutras */
+  --color-background: #F5F7F9;
+  --color-surface: #FFFFFF;
+  --color-border: #DDE3E8;
+  --color-text: #17212B;
+  --color-text-secondary: #687481;
+  --color-text-muted: #A8B2BA;
+
+  /* Tipografia */
+  --font-family: "Inter", sans-serif;
+  --font-regular: 400;
+  --font-medium: 500;
+  --font-semibold: 600;
+  --font-bold: 700;
+
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-md: 14px;
+  --text-lg: 18px;
+  --text-xl: 22px;
+  --text-2xl: 28px;
+  --text-3xl: 32px;
+
+  /* Bootstrap 5 — mapeamento da paleta */
+  --bs-primary: #17324D;
+  --bs-primary-rgb: 23, 50, 77;
+  --bs-secondary: #687481;
+  --bs-secondary-rgb: 104, 116, 129;
+  --bs-success: #3FA66B;
+  --bs-success-rgb: 63, 166, 107;
+  --bs-warning: #E89B3D;
+  --bs-warning-rgb: 232, 155, 61;
+  --bs-danger: #D9534F;
+  --bs-danger-rgb: 217, 83, 79;
+  --bs-info: #5B9BD5;
+  --bs-info-rgb: 91, 155, 213;
+  --bs-body-bg: #F5F7F9;
+  --bs-body-color: #17212B;
+  --bs-border-color: #DDE3E8;
+  --bs-secondary-color: #687481;
+  --bs-tertiary-color: #A8B2BA;
+  --bs-link-color: #2F6B8A;
+  --bs-link-hover-color: #17324D;
+  --bs-font-sans-serif: "Inter", sans-serif;
+  --bs-body-font-family: "Inter", sans-serif;
+  --bs-body-font-size: 0.875rem; /* 14px */
+  --bs-body-font-weight: 400;
+  --bs-heading-color: #17212B;
+}

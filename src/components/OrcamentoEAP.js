@@ -1,1870 +1,748 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Card, 
-  Button, 
-  Modal, 
-  Form, 
-  Alert, 
-  ListGroup,
-  Badge,
-  Dropdown
-} from 'react-bootstrap';
-import { formatCurrency, formatCurrencyValue } from '../utils/formatters';
+import { Modal, Form, Alert, InputGroup, Button } from 'react-bootstrap';
+import { formatCurrency } from '../utils/formatters';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
-import { 
-  collection, 
-  getDocs, 
-  updateDoc, 
-  doc, 
-  query, 
-  where,
-  getDoc
-} from 'firebase/firestore';
-import { DndContext, PointerSensor, useSensor, useSensors, closestCenter } from '@dnd-kit/core';
-import { SortableContext, useSortable, arrayMove, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
+import { collection, getDocs, updateDoc, doc, query, where, getDoc, addDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useAuth } from '../contexts/AuthContext';
 import { useParams, useNavigate } from 'react-router-dom';
-import { 
-  FaPlus, 
-  FaTrash, 
-  FaLayerGroup, 
-  FaFolder, 
-  FaArrowUp, 
-  FaArrowDown, 
-  FaArrowLeft,
-  FaSave,
-  FaEdit,
-  FaChartBar,
-  FaFilePdf,
-  FaCalculator,
-  FaFileExcel
-} from 'react-icons/fa';
+import {
+  migrarEapAntigo, stripUidsForSave, getCompsDoNo, calcularValorTotal, newId
+} from '../utils/eapTree';
+import { copiarEAPCompleta, formatRevisao, getObraId, getRevisao } from '../utils/eapCopy';
+import EapWorkspace from './eap/EapWorkspace';
 
-// Função para formatar data de forma amigável
 const formatarDataAmigavel = (dataISO) => {
   if (!dataISO) return '';
-  
   const data = new Date(dataISO);
   const agora = new Date();
   const diffMs = agora - data;
   const diffDias = Math.floor(diffMs / (1000 * 60 * 60 * 24));
   const diffHoras = Math.floor(diffMs / (1000 * 60 * 60));
   const diffMinutos = Math.floor(diffMs / (1000 * 60));
-  
-  if (diffDias > 0) {
-    return `${diffDias} dia${diffDias > 1 ? 's' : ''} atrás`;
-  } else if (diffHoras > 0) {
-    return `${diffHoras} hora${diffHoras > 1 ? 's' : ''} atrás`;
-  } else if (diffMinutos > 0) {
-    return `${diffMinutos} minuto${diffMinutos > 1 ? 's' : ''} atrás`;
-  } else {
-    return 'Agora mesmo';
-  }
+  if (diffDias > 0) return `${diffDias} dia${diffDias > 1 ? 's' : ''} atrás`;
+  if (diffHoras > 0) return `${diffHoras} hora${diffHoras > 1 ? 's' : ''} atrás`;
+  if (diffMinutos > 0) return `${diffMinutos} minuto${diffMinutos > 1 ? 's' : ''} atrás`;
+  return 'Agora mesmo';
 };
 
-// Função para obter a cor do status
-const getStatusColor = (status) => {
-  const colors = {
-    'Em Análise': 'warning',
-    'Aprovado': 'success',
-    'Rejeitado': 'danger',
-    'Em Execução': 'info',
-    'Concluído': 'primary'
-  };
-  return colors[status] || 'secondary';
-};
-
-function SortableComp({ id, children }) {
-  const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id });
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition
-  };
-  return (
-    <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
-      {children}
-    </div>
-  );
-}
+const getStatusColor = (status) => ({
+  'Em Análise': 'warning', Aprovado: 'success', Rejeitado: 'danger',
+  'Em Execução': 'info', Concluído: 'primary'
+}[status] || 'secondary');
 
 function OrcamentoEAP() {
   const { currentUser } = useAuth();
   const { id: orcamentoId } = useParams();
   const navigate = useNavigate();
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
-  );
-  
+
   const [orcamento, setOrcamento] = useState(null);
-  const [composicoes, setComposicoes] = useState([]);
+  const [catalogoComposicoes, setCatalogoComposicoes] = useState([]);
   const [insumos, setInsumos] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  
-  // Estados para criação de pacotes
-  const [showModalPacote, setShowModalPacote] = useState(false);
-  const [novoPacoteNome, setNovoPacoteNome] = useState('');
-  const [editingPacote, setEditingPacote] = useState(null);
-  
-  // Estados para subgrupos
-  const [showModalSubgrupo, setShowModalSubgrupo] = useState(false);
-  const [novoSubgrupoNome, setNovoSubgrupoNome] = useState('');
-  const [editingSubgrupo, setEditingSubgrupo] = useState(null);
-  const [pacoteParaSubgrupo, setPacoteParaSubgrupo] = useState(null);
-  
-  // Estados para adição de composições
-  const [showModalComposicao, setShowModalComposicao] = useState(false);
-  const [showModalBDI, setShowModalBDI] = useState(false);
-  const [novaComposicao, setNovaComposicao] = useState({
-    composicaoId: '',
-    quantidade: '',
-    custoUnitario: '',
-    pacoteId: '',
-    subgrupoId: ''
-  });
-  const [bdiConfig, setBdiConfig] = useState({
-    lucro: 20,
-    tributos: 35,
-    financeiro: 5,
-    garantias: 2
-  });
+  const [success, setSuccess] = useState('');
+  const [abertos, setAbertos] = useState({});
+  const [activeDragId, setActiveDragId] = useState(null);
 
-  // Estado para controlar quais pacotes estão abertos
-  const [pacotesAbertos, setPacotesAbertos] = useState(new Set());
+  const [showModalNo, setShowModalNo] = useState(false);
+  const [modalNoTipo, setModalNoTipo] = useState('pacote');
+  const [modalNoNome, setModalNoNome] = useState('');
+  const [modalNoParent, setModalNoParent] = useState(null);
+  const [editingNo, setEditingNo] = useState(null);
+
+  const [showModalComp, setShowModalComp] = useState(false);
+  const [compParent, setCompParent] = useState(null);
+  const [compSearch, setCompSearch] = useState('');
+  const [editingComp, setEditingComp] = useState(null);
+  const [compForm, setCompForm] = useState({ composicaoId: '', quantidade: 1 });
+
+  const [showBdi, setShowBdi] = useState(false);
+  const [bdiConfig, setBdiConfig] = useState({ lucro: 10, tributos: 8, financeiro: 2, garantias: 1 });
 
   useEffect(() => {
-    if (currentUser && orcamentoId) {
-      fetchOrcamento();
-      fetchComposicoes();
-      fetchInsumos();
-    }
+    if (currentUser && orcamentoId) carregar();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser, orcamentoId]);
 
-  const fetchOrcamento = async () => {
+  const carregar = async () => {
     try {
-      const docRef = doc(db, 'orcamentos', orcamentoId);
-      const docSnap = await getDoc(docRef);
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        if (data.userId !== currentUser.uid) {
-          navigate('/orcamentos');
-          return;
-        }
-        setOrcamento({ id: docSnap.id, ...data });
-        
-        // Carregar configurações do BDI se existirem
-        if (data.bdiConfig) {
-          setBdiConfig(data.bdiConfig);
-        }
-      } else {
-        navigate('/orcamentos');
-      }
-    } catch (error) {
+      setError('');
+      const snap = await getDoc(doc(db, 'orcamentos', orcamentoId));
+      if (!snap.exists()) { setError('Orçamento não encontrado'); return; }
+      const data = { id: snap.id, ...snap.data() };
+      if (data.userId !== currentUser.uid) { setError('Sem permissão para este orçamento'); return; }
+      // Normalizar orçamentos antigos sem revisão
+      if (!data.obraId) data.obraId = data.id;
+      if (!Number.isFinite(Number(data.revisao))) data.revisao = 0;
+      if (data.revisaoTravada == null) data.revisaoTravada = false;
+      const migrado = migrarEapAntigo(data);
+      setOrcamento(migrado);
+      if (data.bdiConfig) setBdiConfig(data.bdiConfig);
+      const abertosInit = {};
+      (migrado.pacotes || []).forEach((p) => {
+        abertosInit[p.id] = true;
+        (p.grupos || []).forEach((g) => { abertosInit[g.id] = true; });
+      });
+      setAbertos(abertosInit);
+      const [compsSnap, insumosSnap] = await Promise.all([
+        getDocs(query(collection(db, 'composicoes'), where('userId', '==', currentUser.uid))),
+        getDocs(query(collection(db, 'insumos'), where('userId', '==', currentUser.uid)))
+      ]);
+      setCatalogoComposicoes(
+        compsSnap.docs.map((d) => ({ id: d.id, ...d.data() }))
+          .sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR'))
+      );
+      setInsumos(insumosSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    } catch (e) {
+      console.error(e);
       setError('Erro ao carregar orçamento');
-      console.error(error);
     }
   };
 
-  const fetchComposicoes = async () => {
-    try {
-      const q = query(
-        collection(db, 'composicoes'), 
-        where('userId', '==', currentUser.uid)
-      );
-      const querySnapshot = await getDocs(q);
-      const composicoesData = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      composicoesData.sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR'));
-      setComposicoes(composicoesData);
-    } catch (error) {
-      console.error('Erro ao carregar composições:', error);
+  const toggleAberto = (id) => setAbertos((prev) => ({ ...prev, [id]: !prev[id] }));
+
+  const somenteLeitura = Boolean(orcamento?.revisaoTravada);
+
+  const valorTotal = calcularValorTotal(orcamento?.composicoes);
+  const calcularBDI = () => {
+    const bdi = (1 + bdiConfig.lucro / 100) * (1 + bdiConfig.tributos / 100)
+      * (1 + bdiConfig.financeiro / 100) * (1 + bdiConfig.garantias / 100) - 1;
+    return bdi * 100;
+  };
+  const valorComBDI = valorTotal + valorTotal * (calcularBDI() / 100);
+
+  const calcularSubvalores = (composicao) => {
+    const subvalores = { Material: 0, 'Mão de Obra': 0, Equipamento: 0, Serviço: 0 };
+    const original = catalogoComposicoes.find((c) => c.id === composicao.composicaoId);
+    if (original?.insumos?.length) {
+      original.insumos.forEach((item) => {
+        const insumo = insumos.find((i) => i.id === item.insumoId);
+        if (!insumo) return;
+        const valor = (parseFloat(item.quantidade) || 0) * (insumo.precoUnitario || 0);
+        const cat = insumo.categoria || 'Material';
+        if (subvalores[cat] !== undefined) subvalores[cat] += valor;
+        else subvalores.Material += valor;
+      });
     }
-  };
-
-  const fetchInsumos = async () => {
-    try {
-      const q = query(
-        collection(db, 'insumos'), 
-        where('userId', '==', currentUser.uid)
-      );
-      const querySnapshot = await getDocs(q);
-      const insumosData = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      setInsumos(insumosData);
-    } catch (error) {
-      console.error('Erro ao carregar insumos:', error);
+    const soma = Object.values(subvalores).reduce((s, v) => s + v, 0);
+    if (soma === 0) {
+      const t = composicao.custoTotal || 0;
+      subvalores.Material = t * 0.7;
+      subvalores['Mão de Obra'] = t * 0.2;
+      subvalores.Equipamento = t * 0.05;
+      subvalores.Serviço = t * 0.05;
+    } else {
+      const q = parseFloat(composicao.quantidade) || 1;
+      Object.keys(subvalores).forEach((k) => { subvalores[k] *= q; });
     }
+    return subvalores;
   };
 
-  // Funções para gerenciar pacotes
-  const criarPacote = () => {
-    if (!novoPacoteNome.trim()) return;
-    
-    const pacoteId = `pacote_${Date.now()}`;
-    const novoPacote = {
-      id: pacoteId,
-      nome: novoPacoteNome.trim(),
-      ordem: (orcamento?.pacotes || []).length,
-      subgrupos: []
-    };
+  const totaisPorCategoria = (() => {
+    const tot = { Material: 0, 'Mão de Obra': 0, Equipamento: 0, Serviço: 0 };
+    (orcamento?.composicoes || []).forEach((c) => {
+      const sub = calcularSubvalores(c);
+      tot.Material += sub.Material;
+      tot['Mão de Obra'] += sub['Mão de Obra'];
+      tot.Equipamento += sub.Equipamento;
+      tot.Serviço += sub.Serviço;
+    });
+    return tot;
+  })();
 
-    setOrcamento(prev => ({
-      ...prev,
-      pacotes: [...(prev.pacotes || []), novoPacote]
-    }));
-
-    setNovoPacoteNome('');
-    setShowModalPacote(false);
+  const abrirCriarNo = (tipo, parent = null) => {
+    if (somenteLeitura) return;
+    setModalNoTipo(tipo);
+    setModalNoNome('');
+    setModalNoParent(parent);
+    setEditingNo(null);
+    setShowModalNo(true);
   };
 
-  const editarPacote = () => {
-    if (!editingPacote || !novoPacoteNome.trim()) return;
-    
-    setOrcamento(prev => ({
-      ...prev,
-      pacotes: (prev.pacotes || []).map(p => 
-        p.id === editingPacote.id 
-          ? { ...p, nome: novoPacoteNome.trim() }
-          : p
-      )
-    }));
+  const abrirEditarNo = (tipo, entity, parent = null) => {
+    setModalNoTipo(tipo);
+    setModalNoNome(entity.nome || '');
+    setModalNoParent(parent);
+    setEditingNo({ tipo, id: entity.id, ...parent });
+    setShowModalNo(true);
+  };
 
-    setNovoPacoteNome('');
-    setEditingPacote(null);
-    setShowModalPacote(false);
+  const salvarNo = (e) => {
+    e.preventDefault();
+    const nome = modalNoNome.trim();
+    if (!nome) return;
+
+    setOrcamento((prev) => {
+      const pacotes = [...(prev.pacotes || [])];
+      if (editingNo) {
+        if (editingNo.tipo === 'pacote') {
+          return { ...prev, pacotes: pacotes.map((p) => (p.id === editingNo.id ? { ...p, nome } : p)) };
+        }
+        if (editingNo.tipo === 'grupo') {
+          return {
+            ...prev,
+            pacotes: pacotes.map((p) =>
+              p.id === editingNo.pacoteId
+                ? { ...p, grupos: (p.grupos || []).map((g) => (g.id === editingNo.id ? { ...g, nome } : g)) }
+                : p
+            )
+          };
+        }
+        if (editingNo.tipo === 'subgrupo') {
+          return {
+            ...prev,
+            pacotes: pacotes.map((p) =>
+              p.id === editingNo.pacoteId
+                ? {
+                    ...p,
+                    grupos: (p.grupos || []).map((g) =>
+                      g.id === editingNo.grupoId
+                        ? { ...g, subgrupos: (g.subgrupos || []).map((s) => (s.id === editingNo.id ? { ...s, nome } : s)) }
+                        : g
+                    )
+                  }
+                : p
+            )
+          };
+        }
+      }
+
+      if (modalNoTipo === 'pacote') {
+        const id = newId('pacote');
+        pacotes.push({ id, uid: newId('pacote'), nome, ordem: pacotes.length, grupos: [] });
+        setAbertos((a) => ({ ...a, [id]: true }));
+        return { ...prev, pacotes };
+      }
+      if (modalNoTipo === 'grupo' && modalNoParent?.pacoteId) {
+        const id = newId('grupo');
+        return {
+          ...prev,
+          pacotes: pacotes.map((p) => {
+            if (p.id !== modalNoParent.pacoteId) return p;
+            const grupos = [...(p.grupos || []), { id, uid: newId('grupo'), nome, ordem: (p.grupos || []).length, subgrupos: [] }];
+            setAbertos((a) => ({ ...a, [id]: true, [p.id]: true }));
+            return { ...p, grupos };
+          })
+        };
+      }
+      if (modalNoTipo === 'subgrupo' && modalNoParent?.pacoteId && modalNoParent?.grupoId) {
+        const id = newId('subgrupo');
+        return {
+          ...prev,
+          pacotes: pacotes.map((p) => {
+            if (p.id !== modalNoParent.pacoteId) return p;
+            return {
+              ...p,
+              grupos: (p.grupos || []).map((g) => {
+                if (g.id !== modalNoParent.grupoId) return g;
+                const subgrupos = [...(g.subgrupos || []), { id, uid: newId('subgrupo'), nome, ordem: (g.subgrupos || []).length }];
+                setAbertos((a) => ({ ...a, [id]: true, [g.id]: true, [p.id]: true }));
+                return { ...g, subgrupos };
+              })
+            };
+          })
+        };
+      }
+      return prev;
+    });
+    setShowModalNo(false);
   };
 
   const removerPacote = (pacoteId) => {
-    if (!window.confirm('Tem certeza que deseja remover este pacote? Todos os subgrupos e composições serão removidos junto com o pacote.')) return;
-    
-    // Remover o pacote e todas as suas composições
-    setOrcamento(prev => ({
+    if (!window.confirm('Remover este pacote e tudo dentro dele?')) return;
+    setOrcamento((prev) => ({
       ...prev,
-      composicoes: (prev.composicoes || []).filter(c => c.pacoteId !== pacoteId),
-      pacotes: (prev.pacotes || []).filter(p => p.id !== pacoteId)
+      pacotes: (prev.pacotes || []).filter((p) => p.id !== pacoteId),
+      composicoes: (prev.composicoes || []).filter((c) => c.pacoteId !== pacoteId)
     }));
   };
 
-  const moverPacote = (pacoteId, direction) => {
-    setOrcamento(prev => {
-      const pacotes = [...(prev.pacotes || [])];
-      const idx = pacotes.findIndex(p => p.id === pacoteId);
-      if (idx === -1) return prev;
-      
-      const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
-      if (swapIdx < 0 || swapIdx >= pacotes.length) return prev;
-      
-      [pacotes[idx], pacotes[swapIdx]] = [pacotes[swapIdx], pacotes[idx]];
-      
-      // Atualizar ordem
-      pacotes.forEach((p, i) => { p.ordem = i; });
-      
-      return { ...prev, pacotes };
-    });
-  };
-
-  // Funções para gerenciar subgrupos
-  const criarSubgrupo = () => {
-    if (!novoSubgrupoNome.trim() || !pacoteParaSubgrupo) return;
-    
-    const subgrupoId = `subgrupo_${Date.now()}`;
-    const novoSubgrupo = {
-      id: subgrupoId,
-      nome: novoSubgrupoNome.trim(),
-      ordem: (pacoteParaSubgrupo.subgrupos || []).length
-    };
-
-    setOrcamento(prev => ({
+  const removerGrupo = (pacoteId, grupoId) => {
+    if (!window.confirm('Remover este grupo e seus subgrupos/composições?')) return;
+    setOrcamento((prev) => ({
       ...prev,
-      pacotes: (prev.pacotes || []).map(p => 
-        p.id === pacoteParaSubgrupo.id 
-          ? { ...p, subgrupos: [...(p.subgrupos || []), novoSubgrupo] }
-          : p
-      )
+      pacotes: (prev.pacotes || []).map((p) =>
+        p.id === pacoteId ? { ...p, grupos: (p.grupos || []).filter((g) => g.id !== grupoId) } : p
+      ),
+      composicoes: (prev.composicoes || []).filter((c) => !(c.pacoteId === pacoteId && c.grupoId === grupoId))
     }));
-
-    setNovoSubgrupoNome('');
-    setPacoteParaSubgrupo(null);
-    setShowModalSubgrupo(false);
   };
 
-  const editarSubgrupo = () => {
-    if (!editingSubgrupo || !novoSubgrupoNome.trim()) return;
-    
-    setOrcamento(prev => ({
+  const removerSubgrupo = (pacoteId, grupoId, subgrupoId) => {
+    if (!window.confirm('Remover este subgrupo e suas composições?')) return;
+    setOrcamento((prev) => ({
       ...prev,
-      pacotes: (prev.pacotes || []).map(p => 
-        p.id === editingSubgrupo.pacoteId 
-          ? { 
-              ...p, 
-              subgrupos: (p.subgrupos || []).map(s => 
-                s.id === editingSubgrupo.id 
-                  ? { ...s, nome: novoSubgrupoNome.trim() }
-                  : s
+      pacotes: (prev.pacotes || []).map((p) =>
+        p.id === pacoteId
+          ? {
+              ...p,
+              grupos: (p.grupos || []).map((g) =>
+                g.id === grupoId
+                  ? { ...g, subgrupos: (g.subgrupos || []).filter((s) => s.id !== subgrupoId) }
+                  : g
               )
             }
           : p
-      )
-    }));
-
-    setNovoSubgrupoNome('');
-    setEditingSubgrupo(null);
-    setShowModalSubgrupo(false);
-  };
-
-  const removerSubgrupo = (pacoteId, subgrupoId) => {
-    if (!window.confirm('Tem certeza que deseja remover este subgrupo? Todas as composições dentro dele também serão removidas.')) return;
-    
-    // Remover composições do subgrupo
-    setOrcamento(prev => ({
-      ...prev,
-      composicoes: (prev.composicoes || []).filter(c => 
-        !(c.pacoteId === pacoteId && c.subgrupoId === subgrupoId)
       ),
-      pacotes: (prev.pacotes || []).map(p => 
-        p.id === pacoteId 
-          ? { ...p, subgrupos: (p.subgrupos || []).filter(s => s.id !== subgrupoId) }
-          : p
+      composicoes: (prev.composicoes || []).filter(
+        (c) => !(c.pacoteId === pacoteId && c.grupoId === grupoId && c.subgrupoId === subgrupoId)
       )
     }));
   };
 
-  const moverSubgrupo = (pacoteId, subgrupoId, direction) => {
-    setOrcamento(prev => {
-      const pacotes = [...(prev.pacotes || [])];
-      const pacote = pacotes.find(p => p.id === pacoteId);
-      if (!pacote) return prev;
-      
-      const subgrupos = [...(pacote.subgrupos || [])];
-      const idx = subgrupos.findIndex(s => s.id === subgrupoId);
-      if (idx === -1) return prev;
-      
-      const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
-      if (swapIdx < 0 || swapIdx >= subgrupos.length) return prev;
-      
-      [subgrupos[idx], subgrupos[swapIdx]] = [subgrupos[swapIdx], subgrupos[idx]];
-      
-      // Atualizar ordem
-      subgrupos.forEach((s, i) => { s.ordem = i; });
-      
-      pacote.subgrupos = subgrupos;
-      return { ...prev, pacotes };
-    });
+  const removerComposicao = (uid) => {
+    if (!window.confirm('Remover esta composição do orçamento?')) return;
+    setOrcamento((prev) => ({
+      ...prev,
+      composicoes: (prev.composicoes || []).filter((c) => c.uid !== uid)
+    }));
   };
 
-  // Funções para gerenciar composições
-  const adicionarComposicao = () => {
-    if (!novaComposicao.composicaoId || !novaComposicao.quantidade || !novaComposicao.custoUnitario || !novaComposicao.pacoteId || !novaComposicao.subgrupoId) {
-      setError('Preencha todos os campos da composição');
+  const abrirAddComp = (parent) => {
+    setCompParent(parent);
+    setEditingComp(null);
+    setCompForm({ composicaoId: '', quantidade: 1 });
+    setCompSearch('');
+    setShowModalComp(true);
+  };
+
+  const abrirEditComp = (comp) => {
+    setCompParent({ pacoteId: comp.pacoteId, grupoId: comp.grupoId, subgrupoId: comp.subgrupoId });
+    setEditingComp(comp);
+    setCompForm({ composicaoId: comp.composicaoId, quantidade: comp.quantidade });
+    setCompSearch('');
+    setShowModalComp(true);
+  };
+
+  const salvarComposicao = (e) => {
+    e.preventDefault();
+    const catalogo = catalogoComposicoes.find((c) => c.id === compForm.composicaoId);
+    if (!catalogo || !compParent) {
+      setError('Selecione uma composição do catálogo');
       return;
     }
+    const quantidade = parseFloat(compForm.quantidade) || 1;
+    const custoUnitario = catalogo.valorTotal || 0;
+    const custoTotal = quantidade * custoUnitario;
 
-    const composicao = composicoes.find(c => c.id === novaComposicao.composicaoId);
-    if (!composicao) return;
-
-    const composicaoOrcamento = {
-      composicaoId: novaComposicao.composicaoId,
-      nome: composicao.nome,
-      unidade: composicao.unidade,
-      quantidade: parseFloat(novaComposicao.quantidade),
-      custoUnitario: parseFloat(novaComposicao.custoUnitario),
-      custoTotal: parseFloat(novaComposicao.quantidade) * parseFloat(novaComposicao.custoUnitario),
-      insumos: composicao.insumos || [],
-      pacoteId: novaComposicao.pacoteId,
-      subgrupoId: novaComposicao.subgrupoId,
-      ordem: 0,
-      tempId: `${Date.now()}-${Math.random()}`
-    };
-
-    setOrcamento(prev => ({
-      ...prev,
-      composicoes: [...(prev.composicoes || []), composicaoOrcamento]
-    }));
-
-    setNovaComposicao({
-      composicaoId: '',
-      quantidade: '',
-      custoUnitario: '',
-      pacoteId: '',
-      subgrupoId: ''
-    });
-    setShowModalComposicao(false);
-  };
-
-  const removerComposicao = (tempId) => {
-    setOrcamento(prev => ({
-      ...prev,
-      composicoes: (prev.composicoes || []).filter(c => c.tempId !== tempId)
-    }));
-  };
-
-  const onDragEndComps = (pacoteId, itens) => (event) => {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-    
-    const oldIndex = itens.findIndex(i => (i.tempId || '') === active.id);
-    const newIndex = itens.findIndex(i => (i.tempId || '') === over.id);
-    if (oldIndex === -1 || newIndex === -1) return;
-    
-    const reordered = arrayMove(itens, oldIndex, newIndex);
-    setOrcamento(prev => {
-      const arr = [...(prev.composicoes || [])];
-      const idsInOrder = reordered.map(i => i.tempId);
-      
-      // Atualizar ordem das composições do pacote
-      idsInOrder.forEach((tempId, i) => {
-        const idx = arr.findIndex(c => c.tempId === tempId);
-        if (idx !== -1) {
-          arr[idx] = { ...arr[idx], ordem: i };
-        }
-      });
-      
-      return { ...prev, composicoes: arr };
-    });
-  };
-
-  // Função para formatar valores com separadores de milhares e decimais
-  const formatarValor = (valor) => {
-    if (valor === null || valor === undefined || isNaN(valor)) {
-      return '0,00';
-    }
-    
-    return Number(valor).toLocaleString('pt-BR', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
-    });
-  };
-
-  const calcularValorTotal = () => {
-    return (orcamento?.composicoes || []).reduce((total, composicao) => total + composicao.custoTotal, 0);
-  };
-
-  const calcularBDI = () => {
-    const lucro = bdiConfig.lucro / 100;
-    const tributos = bdiConfig.tributos / 100;
-    const financeiro = bdiConfig.financeiro / 100;
-    const garantias = bdiConfig.garantias / 100;
-    
-    const bdi = (1 + lucro) * (1 + tributos) * (1 + financeiro) * (1 + garantias) - 1;
-    return bdi * 100; // Retorna em porcentagem
-  };
-
-  const calcularValorBDI = () => {
-    const valorTotal = calcularValorTotal();
-    const bdi = calcularBDI() / 100;
-    return valorTotal * bdi;
-  };
-
-  const calcularValorTotalComBDI = () => {
-    const valorTotal = calcularValorTotal();
-    const valorBDI = calcularValorBDI();
-    return valorTotal + valorBDI;
-  };
-
-  const totalDoPacote = (pacoteId) => {
-    return (orcamento?.composicoes || [])
-      .filter(c => c.pacoteId === pacoteId)
-      .reduce((sum, c) => sum + (c.custoTotal || 0), 0);
-  };
-
-  const totalDoSubgrupo = (pacoteId, subgrupoId) => {
-    return (orcamento?.composicoes || [])
-      .filter(c => c.pacoteId === pacoteId && c.subgrupoId === subgrupoId)
-      .reduce((sum, c) => sum + (c.custoTotal || 0), 0);
-  };
-
-  const calcularSubvaloresComposicao = (composicao) => {
-    const subvalores = {
-      'Material': 0,
-      'Mão de Obra': 0,
-      'Equipamento': 0,
-      'Serviço': 0
-    };
-    
-    // Buscar a composição original no array de composições
-    const composicaoOriginal = composicoes.find(c => c.id === composicao.composicaoId);
-    
-    if (composicaoOriginal && composicaoOriginal.insumos && Array.isArray(composicaoOriginal.insumos)) {
-      // Calcular baseado nos insumos reais da composição
-      composicaoOriginal.insumos.forEach(item => {
-        // Buscar o insumo pelo ID para obter a categoria e preço
-        const insumo = insumos.find(ins => ins.id === item.insumoId);
-        if (insumo) {
-          // Calcular o valor do insumo na composição
-          const valorInsumoNaComposicao = (parseFloat(item.quantidade) || 0) * (insumo.precoUnitario || 0);
-          
-          // Aplicar a categoria do insumo
-          const categoria = insumo.categoria || 'Material';
-          if (subvalores[categoria] !== undefined) {
-            subvalores[categoria] += valorInsumoNaComposicao;
-          } else {
-            subvalores['Material'] += valorInsumoNaComposicao;
-          }
-        }
-      });
-    }
-    
-    // Se não conseguiu calcular pelos insumos, distribuir o valor total
-    const totalCalculado = Object.values(subvalores).reduce((sum, val) => sum + val, 0);
-    if (totalCalculado === 0) {
-      // Usar distribuição padrão se não conseguir calcular pelos insumos
-      const valorTotal = composicao.custoTotal || 0;
-      subvalores['Material'] = valorTotal * 0.7;
-      subvalores['Mão de Obra'] = valorTotal * 0.2;
-      subvalores['Equipamento'] = valorTotal * 0.05;
-      subvalores['Serviço'] = valorTotal * 0.05;
-    }
-    
-    // Multiplicar todos os subvalores pela quantidade da composição no orçamento
-    const quantidade = parseFloat(composicao.quantidade) || 1;
-    Object.keys(subvalores).forEach(categoria => {
-      subvalores[categoria] = subvalores[categoria] * quantidade;
-    });
-    
-    return { subvalores, total: composicao.custoTotal || 0 };
-  };
-
-  const obterComposicoesDoPacote = (pacoteId) => {
-    return (orcamento?.composicoes || [])
-      .filter(c => c.pacoteId === pacoteId)
-      .sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
-  };
-
-  const obterComposicoesDoSubgrupo = (pacoteId, subgrupoId) => {
-    return (orcamento?.composicoes || [])
-      .filter(c => c.pacoteId === pacoteId && c.subgrupoId === subgrupoId)
-      .sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
-  };
-
-  const temSubgrupos = () => {
-    return (orcamento?.pacotes || []).some(p => p.subgrupos && p.subgrupos.length > 0);
-  };
-
-  const togglePacote = (pacoteId) => {
-    setPacotesAbertos(prev => {
-      const novo = new Set(prev);
-      if (novo.has(pacoteId)) {
-        novo.delete(pacoteId);
-      } else {
-        novo.add(pacoteId);
+    setOrcamento((prev) => {
+      if (editingComp) {
+        return {
+          ...prev,
+          composicoes: (prev.composicoes || []).map((c) =>
+            c.uid === editingComp.uid
+              ? {
+                  ...c,
+                  composicaoId: catalogo.id,
+                  nome: catalogo.nome,
+                  unidade: catalogo.unidade,
+                  quantidade,
+                  custoUnitario,
+                  custoTotal,
+                  insumos: catalogo.insumos || []
+                }
+              : c
+          )
+        };
       }
-      return novo;
+      const siblings = getCompsDoNo(prev.composicoes, compParent);
+      const nova = {
+        uid: newId('comp'),
+        composicaoId: catalogo.id,
+        nome: catalogo.nome,
+        unidade: catalogo.unidade,
+        quantidade,
+        custoUnitario,
+        custoTotal,
+        insumos: catalogo.insumos || [],
+        pacoteId: compParent.pacoteId,
+        grupoId: compParent.grupoId ?? null,
+        subgrupoId: compParent.subgrupoId ?? null,
+        ordem: siblings.length
+      };
+      return { ...prev, composicoes: [...(prev.composicoes || []), nova] };
     });
+    setShowModalComp(false);
   };
 
-  const abrirTodosPacotes = () => {
-    const todosIds = (orcamento?.pacotes || []).map(p => p.id);
-    setPacotesAbertos(new Set(todosIds));
-  };
-
-  const fecharTodosPacotes = () => {
-    setPacotesAbertos(new Set());
+  const atualizarQtdInline = (uid, quantidade) => {
+    const q = parseFloat(quantidade);
+    if (Number.isNaN(q) || q < 0) return;
+    setOrcamento((prev) => ({
+      ...prev,
+      composicoes: (prev.composicoes || []).map((c) =>
+        c.uid === uid ? { ...c, quantidade: q, custoTotal: q * (c.custoUnitario || 0) } : c
+      )
+    }));
   };
 
   const salvarEAP = async () => {
+    if (!orcamento) return;
+    if (somenteLeitura) {
+      setError('Esta revisão está travada. Crie uma nova revisão para editar.');
+      return;
+    }
     setLoading(true);
     setError('');
-
     try {
-      const composicoesSanitizadas = (orcamento.composicoes || []).map(({ tempId, ...rest }) => rest);
-      const orcamentoData = {
-        ...orcamento,
-        composicoes: composicoesSanitizadas,
-        valorTotal: calcularValorTotal(),
+      const { pacotes, composicoes } = stripUidsForSave(orcamento);
+      const payload = {
+        pacotes,
+        composicoes,
+        valorTotal: calcularValorTotal(composicoes),
+        totaisPorCategoria,
         ultimaAtualizacaoEAP: new Date().toISOString(),
-        bdiConfig: bdiConfig // Salvar as configurações do BDI
+        bdiConfig: orcamento.bdiConfig ? bdiConfig : null,
+        obraId: getObraId(orcamento),
+        revisao: getRevisao(orcamento),
+        revisaoTravada: false
       };
-
-      await updateDoc(doc(db, 'orcamentos', orcamentoId), orcamentoData);
-      
-      // Atualizar o estado local com a nova data e BDI
-      setOrcamento(prev => ({
-        ...prev,
-        ultimaAtualizacaoEAP: orcamentoData.ultimaAtualizacaoEAP,
-        bdiConfig: bdiConfig
-      }));
-      
-      setError('');
-      alert('EAP salva com sucesso!');
-    } catch (error) {
+      await updateDoc(doc(db, 'orcamentos', orcamentoId), payload);
+      setOrcamento((prev) => migrarEapAntigo({ ...prev, ...payload }));
+      setSuccess('EAP salva com sucesso!');
+    } catch (e) {
+      console.error(e);
       setError('Erro ao salvar EAP');
-      console.error(error);
     }
+    setLoading(false);
+  };
 
+  const handleNovaRevisao = async () => {
+    if (!orcamento || somenteLeitura) return;
+    const ok = window.confirm(
+      `Criar nova revisão a partir da Rev. ${formatRevisao(getRevisao(orcamento))}?\n\n` +
+        'A revisão atual será travada e uma nova revisão editável será criada.'
+    );
+    if (!ok) return;
+
+    setLoading(true);
+    setError('');
+    try {
+      // Salva estado atual antes de travar
+      const { pacotes, composicoes } = stripUidsForSave(orcamento);
+      const obraId = getObraId(orcamento);
+      const revisaoAtual = getRevisao(orcamento);
+
+      await updateDoc(doc(db, 'orcamentos', orcamentoId), {
+        pacotes,
+        composicoes,
+        valorTotal: calcularValorTotal(composicoes),
+        totaisPorCategoria,
+        ultimaAtualizacaoEAP: new Date().toISOString(),
+        bdiConfig: orcamento.bdiConfig ? bdiConfig : null,
+        obraId,
+        revisao: revisaoAtual,
+        revisaoTravada: true,
+        updatedAt: new Date()
+      });
+
+      const siblingsSnap = await getDocs(
+        query(collection(db, 'orcamentos'), where('userId', '==', currentUser.uid))
+      );
+      let maxRev = revisaoAtual;
+      siblingsSnap.docs.forEach((d) => {
+        const data = d.data();
+        if (getObraId({ ...data, id: d.id }) === obraId) {
+          maxRev = Math.max(maxRev, getRevisao(data));
+        }
+      });
+
+      const eapCopiada = copiarEAPCompleta(pacotes, composicoes);
+      const docRef = await addDoc(collection(db, 'orcamentos'), {
+        nome: orcamento.nome,
+        descricao: orcamento.descricao || '',
+        cliente: orcamento.cliente || '',
+        endereco: orcamento.endereco || '',
+        data: orcamento.data || new Date().toISOString().split('T')[0],
+        userId: currentUser.uid,
+        createdAt: new Date(),
+        valorTotal: calcularValorTotal(composicoes),
+        totaisPorCategoria,
+        status: 'Em Análise',
+        obraId,
+        revisao: maxRev + 1,
+        revisaoTravada: false,
+        revisaoOrigemId: orcamentoId,
+        pacotes: eapCopiada.pacotes,
+        composicoes: eapCopiada.composicoes,
+        bdiConfig: orcamento.bdiConfig ? { ...bdiConfig } : null,
+        ultimaAtualizacaoEAP: new Date().toISOString()
+      });
+
+      navigate(`/orcamentos/${docRef.id}/eap`);
+    } catch (e) {
+      console.error(e);
+      setError('Erro ao criar nova revisão: ' + e.message);
+    }
     setLoading(false);
   };
 
   const atualizarStatus = async (novoStatus) => {
-    setLoading(true);
-    setError('');
-
-    try {
-      const orcamentoData = {
-        status: novoStatus
-      };
-
-      await updateDoc(doc(db, 'orcamentos', orcamentoId), orcamentoData);
-      
-      // Atualizar o estado local
-      setOrcamento(prev => ({
-        ...prev,
-        status: novoStatus
-      }));
-      
-      setError('');
-      alert(`Status alterado para "${novoStatus}" com sucesso!`);
-    } catch (error) {
-      setError('Erro ao atualizar status');
-      console.error(error);
+    if (somenteLeitura) {
+      setError('Esta revisão está travada.');
+      return;
     }
-
+    setLoading(true);
+    try {
+      await updateDoc(doc(db, 'orcamentos', orcamentoId), { status: novoStatus });
+      setOrcamento((prev) => ({ ...prev, status: novoStatus }));
+      setSuccess(`Status alterado para "${novoStatus}"`);
+    } catch (e) {
+      setError('Erro ao atualizar status');
+    }
     setLoading(false);
+  };
+
+  const iterarComposicoesExport = (cb) => {
+    const pacotes = [...(orcamento.pacotes || [])].sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
+    pacotes.forEach((p) => {
+      getCompsDoNo(orcamento.composicoes, { pacoteId: p.id }).forEach((c) => cb(p, null, null, c));
+      [...(p.grupos || [])].sort((a, b) => (a.ordem || 0) - (b.ordem || 0)).forEach((g) => {
+        getCompsDoNo(orcamento.composicoes, { pacoteId: p.id, grupoId: g.id }).forEach((c) => cb(p, g, null, c));
+        [...(g.subgrupos || [])].sort((a, b) => (a.ordem || 0) - (b.ordem || 0)).forEach((s) => {
+          getCompsDoNo(orcamento.composicoes, {
+            pacoteId: p.id, grupoId: g.id, subgrupoId: s.id
+          }).forEach((c) => cb(p, g, s, c));
+        });
+      });
+    });
   };
 
   const exportarEAPPdf = () => {
     if (!orcamento) return;
-
     try {
-      const doc = new jsPDF();
-      const pageWidth = doc.internal.pageSize.width;
+      const docPdf = new jsPDF();
+      const pageWidth = docPdf.internal.pageSize.width;
       const margin = 20;
-      let yPosition = 20;
+      docPdf.setFillColor(41, 128, 185);
+      docPdf.rect(0, 0, pageWidth, 45, 'F');
+      docPdf.setTextColor(255, 255, 255);
+      docPdf.setFontSize(16);
+      docPdf.setFont('helvetica', 'bold');
+      docPdf.text('ESTRUTURA ANALÍTICA DO PROJETO (EAP)', pageWidth / 2, 28, { align: 'center' });
+      docPdf.setTextColor(0, 0, 0);
+      docPdf.setFontSize(10);
+      docPdf.setFont('helvetica', 'normal');
+      docPdf.text(`Projeto: ${orcamento.nome || ''}`, margin, 60);
+      docPdf.text(`Cliente: ${orcamento.cliente || ''}`, margin, 70);
+      docPdf.text(`Total: ${formatCurrency(valorTotal)}`, margin, 80);
+      if (orcamento.bdiConfig) docPdf.text(`Total c/ BDI: ${formatCurrency(valorComBDI)}`, margin, 90);
+      docPdf.text(
+        `Material: ${formatCurrency(totaisPorCategoria.Material)}  |  ` +
+        `Mão de Obra: ${formatCurrency(totaisPorCategoria['Mão de Obra'])}  |  ` +
+        `Equipamento: ${formatCurrency(totaisPorCategoria.Equipamento)}  |  ` +
+        `Serviço: ${formatCurrency(totaisPorCategoria.Serviço)}`,
+        margin,
+        orcamento.bdiConfig ? 100 : 90
+      );
 
-      // Cabeçalho profissional com fundo azul
-      doc.setFillColor(41, 128, 185);
-      doc.rect(0, 0, pageWidth, 45, 'F');
-      
-      // Logo placeholder (círculo branco com azul interno)
-      doc.setFillColor(255, 255, 255);
-      doc.circle(25, 22, 8, 'F');
-      doc.setFillColor(41, 128, 185);
-      doc.circle(25, 22, 6, 'F');
-      
-      // Título principal
-      doc.setTextColor(255, 255, 255);
-      doc.setFontSize(18);
-      doc.setFont('helvetica', 'bold');
-      doc.text('ESTRUTURA ANALÍTICA DO PROJETO (EAP)', pageWidth / 2, 28, { align: 'center' });
-      
-      // Informações do projeto em duas colunas
-      doc.setTextColor(0, 0, 0);
-      doc.setFontSize(10);
-      doc.setFont('helvetica', 'normal');
-      
-      // Coluna esquerda
-      doc.text('PROJETO:', margin, 60);
-      doc.text('CLIENTE:', margin, 70);
-      doc.text('ENDEREÇO:', margin, 80);
-      doc.text('DATA:', margin, 90);
-      doc.text('STATUS:', margin, 100);
-      
-      // Coluna direita
-      doc.text('ELABORADOR:', pageWidth - 80, 60);
-      doc.text('ORÇAMENTO:', pageWidth - 80, 70);
-      doc.text('ÚLTIMA ATUALIZAÇÃO:', pageWidth - 80, 80);
-      doc.text('BDI APLICADO:', pageWidth - 80, 90);
-      
-      // Valores das informações
-      doc.setFont('helvetica', 'bold');
-      doc.text(orcamento.nome || 'N/A', margin + 35, 60);
-      doc.text(orcamento.cliente || 'N/A', margin + 35, 70);
-      doc.text(orcamento.endereco || 'N/A', margin + 35, 80);
-      doc.text(new Date(orcamento.data).toLocaleDateString('pt-BR') || 'N/A', margin + 35, 90);
-      doc.text(orcamento.status || 'Em Análise', margin + 35, 100);
-      
-      doc.text(currentUser?.displayName || currentUser?.email || 'N/A', pageWidth - 35, 60);
-      doc.text(new Date(orcamento.data).toLocaleDateString('pt-BR') || 'N/A', pageWidth - 35, 70);
-      doc.text(orcamento.ultimaAtualizacaoEAP ? formatarDataAmigavel(orcamento.ultimaAtualizacaoEAP) : 'N/A', pageWidth - 35, 80);
-      
-      const valorTotal = calcularValorTotal();
-      const valorTotalComBDI = calcularValorTotalComBDI();
-      const bdiPercentual = valorTotal > 0 ? ((valorTotalComBDI - valorTotal) / valorTotal) * 100 : 0;
-      doc.text(`${bdiPercentual.toFixed(2)}%`, pageWidth - 35, 90);
-      
-      // Linha separadora
-      doc.setDrawColor(200, 200, 200);
-      doc.line(margin, 110, pageWidth - margin, 110);
-      
-      // Resumo financeiro
-      doc.setFontSize(12);
-      doc.setFont('helvetica', 'bold');
-      doc.text('RESUMO FINANCEIRO', pageWidth / 2, 125, { align: 'center' });
-      
-      doc.setFontSize(10);
-      doc.setFont('helvetica', 'normal');
-      doc.text('Valor Total (sem BDI):', margin, 140);
-      doc.text('BDI Aplicado:', margin, 150);
-      doc.text('Valor Total (com BDI):', margin, 160);
-      
-      doc.setFont('helvetica', 'bold');
-      doc.text(formatCurrency(valorTotal), pageWidth - margin - 40, 140);
-      doc.text(`${bdiPercentual.toFixed(2)}%`, pageWidth - margin - 40, 150);
-      doc.text(formatCurrency(valorTotalComBDI), pageWidth - margin - 40, 160);
-      
-      // Linha separadora
-      doc.line(margin, 170, pageWidth - margin, 170);
-      
-      // EAP - Início em nova página se necessário
-      let eapYPosition = 180;
-      let pageNumber = 1;
-      
-      // Função para adicionar nova página
-      const addNewPage = () => {
-        doc.addPage();
-        pageNumber++;
-        eapYPosition = 20;
-        
-        // Cabeçalho da página
-        doc.setFillColor(41, 128, 185);
-        doc.rect(0, 0, pageWidth, 15, 'F');
-        doc.setTextColor(255, 255, 255);
-        doc.setFontSize(10);
-        doc.text(`EAP - Página ${pageNumber}`, pageWidth / 2, 8, { align: 'center' });
-        doc.text(orcamento.nome || 'N/A', pageWidth / 2, 12, { align: 'center' });
-        
-        doc.setTextColor(0, 0, 0);
-        eapYPosition = 20;
-      };
-      
-      // Verificar se precisa de nova página para a tabela EAP
-      if (eapYPosition > doc.internal.pageSize.height - 100) {
-        addNewPage();
-      }
-      
-      // Título da seção EAP
-      doc.setFontSize(16);
-      doc.setFont('helvetica', 'bold');
-      doc.setTextColor(41, 128, 185);
-      doc.text('ESTRUTURA ANALÍTICA DO PROJETO', pageWidth / 2, eapYPosition, { align: 'center' });
-      eapYPosition += 20;
-      
-      // Tabela de composições com layout melhorado
-      const composicoesData = [];
-      const todosPacotes = (orcamento.pacotes || []).sort((a, b) => a.ordem - b.ordem);
-
-      todosPacotes.forEach((pacote) => {
-        const subgrupos = (pacote.subgrupos || []).sort((a, b) => a.ordem - b.ordem);
-        
-        subgrupos.forEach((subgrupo) => {
-          const itens = obterComposicoesDoSubgrupo(pacote.id, subgrupo.id);
-          
-          itens.forEach((comp) => {
-            const { subvalores, total } = calcularSubvaloresComposicao(comp);
-            const porcentagem = valorTotal > 0 ? ((total / valorTotal) * 100).toFixed(1) : '0.0';
-            
-            // Quebrar texto longo se necessário
-            let nomeComposicao = comp.nome;
-            if (nomeComposicao.length > 40) {
-              nomeComposicao = nomeComposicao.substring(0, 37) + '...';
-            }
-            
-            let nomePacoteSubgrupo = `${pacote.nome} > ${subgrupo.nome}`;
-            if (nomePacoteSubgrupo.length > 35) {
-              nomePacoteSubgrupo = nomePacoteSubgrupo.substring(0, 32) + '...';
-            }
-            
-            composicoesData.push([
-              nomePacoteSubgrupo,
-              nomeComposicao,
-              `${comp.quantidade} ${comp.unidade}`,
-              formatCurrency(subvalores.Material),
-              formatCurrency(subvalores['Mão de Obra']),
-              formatCurrency(subvalores.Equipamento),
-              formatCurrency(subvalores.Serviço),
-              formatCurrency(total),
-              `${porcentagem}%`
-            ]);
-          });
-        });
+      const rows = [];
+      iterarComposicoesExport((p, g, s, c) => {
+        const caminho = [p.nome, g?.nome, s?.nome].filter(Boolean).join(' > ');
+        const sub = calcularSubvalores(c);
+        const pct = valorTotal > 0 ? ((c.custoTotal / valorTotal) * 100).toFixed(1) : '0.0';
+        rows.push([
+          caminho, c.nome, `${c.quantidade} ${c.unidade}`,
+          formatCurrency(sub.Material), formatCurrency(sub['Mão de Obra']),
+          formatCurrency(sub.Equipamento), formatCurrency(sub.Serviço),
+          formatCurrency(c.custoTotal), `${pct}%`
+        ]);
       });
 
-      // Cabeçalhos da tabela
-      const headers = [
-        'Pacote/Subgrupo',
-        'Composição',
-        'Quantidade',
-        'Material',
-        'Mão de Obra',
-        'Equipamento',
-        'Serviço',
-        'Total',
-        '%'
-      ];
-
-      // Configurações da tabela melhorada
-      const tableConfig = {
-        head: [headers],
-        body: composicoesData,
-        startY: eapYPosition,
-        margin: { left: margin, right: margin },
-        styles: {
-          fontSize: 7,
-          cellPadding: 3,
-          lineWidth: 0.1
-        },
-        headStyles: {
-          fillColor: [41, 128, 185],
-          textColor: 255,
-          fontStyle: 'bold',
-          fontSize: 8
-        },
-        alternateRowStyles: {
-          fillColor: [248, 249, 250]
-        },
-        columnStyles: {
-          0: { cellWidth: 32, cellMinWidth: 32 }, // Pacote/Subgrupo
-          1: { cellWidth: 35, cellMinWidth: 35 }, // Composição
-          2: { cellWidth: 18, cellMinWidth: 18 }, // Quantidade
-          3: { cellWidth: 18, cellMinWidth: 18 }, // Material
-          4: { cellWidth: 18, cellMinWidth: 18 }, // Mão de Obra
-          5: { cellWidth: 18, cellMinWidth: 18 }, // Equipamento
-          6: { cellWidth: 18, cellMinWidth: 18 }, // Serviço
-          7: { cellWidth: 18, cellMinWidth: 18 }, // Total
-          8: { cellWidth: 12, cellMinWidth: 12 }  // %
-        },
-        didDrawPage: function (data) {
-          // Adicionar número da página
-          doc.setFontSize(8);
-          doc.setTextColor(128, 128, 128);
-          doc.text(`Página ${doc.internal.getCurrentPageInfo().pageNumber}`, pageWidth / 2, doc.internal.pageSize.height - 10, { align: 'center' });
-        }
-      };
-
-      // Gerar tabela
-      autoTable(doc, tableConfig);
-
-      // Resumo por pacote em nova página se necessário
-      let resumoY = doc.lastAutoTable.finalY + 20;
-      
-      if (resumoY > doc.internal.pageSize.height - 60) {
-        addNewPage();
-        resumoY = 20;
-      }
-
-      doc.setFontSize(14);
-      doc.setFont('helvetica', 'bold');
-      doc.setTextColor(41, 128, 185);
-      doc.text('RESUMO POR PACOTE', pageWidth / 2, resumoY, { align: 'center' });
-      resumoY += 15;
-
-      doc.setFontSize(10);
-      doc.setFont('helvetica', 'normal');
-      doc.setTextColor(0, 0, 0);
-
-      todosPacotes.forEach((pacote) => {
-        const totalPacote = totalDoPacote(pacote.id);
-        const porcentagemPacote = valorTotal > 0 ? ((totalPacote / valorTotal) * 100).toFixed(1) : '0.0';
-        
-        doc.text(`${pacote.nome}: ${formatCurrency(totalPacote)} (${porcentagemPacote}%)`, margin, resumoY);
-        resumoY += 8;
+      autoTable(docPdf, {
+        head: [['Caminho', 'Composição', 'Qtd', 'Material', 'Mão de Obra', 'Equipamento', 'Serviço', 'Total', '%']],
+        body: rows,
+        startY: orcamento.bdiConfig ? 110 : 100,
+        styles: { fontSize: 7 },
+        headStyles: { fillColor: [41, 128, 185] }
       });
-
-      // Valor total
-      resumoY += 15;
-      doc.setDrawColor(200, 200, 200);
-      doc.line(margin, resumoY, pageWidth - margin, resumoY);
-      resumoY += 15;
-      
-      doc.setFontSize(14);
-      doc.setFont('helvetica', 'bold');
-      doc.setTextColor(41, 128, 185);
-      doc.text(`VALOR TOTAL DO PROJETO: ${formatCurrency(valorTotal)}`, margin, resumoY);
-      resumoY += 10;
-      doc.text(`VALOR TOTAL COM BDI: ${formatCurrency(valorTotalComBDI)}`, margin, resumoY);
-
-      // Rodapé
-      doc.setFontSize(8);
-      doc.setFont('helvetica', 'normal');
-      doc.setTextColor(128, 128, 128);
-      doc.text(`Documento gerado em ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR')}`, pageWidth / 2, doc.internal.pageSize.height - 20, { align: 'center' });
-
-      // Salvar o PDF
-      const fileName = `EAP_${orcamento.nome.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`;
-      doc.save(fileName);
-
-    } catch (error) {
-      console.error('Erro ao gerar PDF:', error);
-      alert('Erro ao gerar PDF. Verifique o console para mais detalhes.');
+      docPdf.save(`EAP_${(orcamento.nome || 'orcamento').replace(/[^a-zA-Z0-9]/g, '_')}.pdf`);
+    } catch (e) {
+      console.error(e);
+      alert('Erro ao gerar PDF');
     }
   };
 
   const exportarEAPExcel = () => {
     if (!orcamento) return;
-
     try {
-      const todosPacotes = (orcamento.pacotes || []).sort((a, b) => a.ordem - b.ordem);
-      const valorTotal = calcularValorTotal();
-      const valorTotalComBDI = calcularValorTotalComBDI();
-
-      // Criar workbook com uma aba
-      const workbook = XLSX.utils.book_new();
-
-      // === ABA EAP ===
-      const eapData = [];
-      
-      // === CABEÇALHO PROFISSIONAL ===
-      // Logo e nome da empresa (linhas 1-3)
-      eapData.push(['LOGO DA EMPRESA']); // Linha 1 - Logo será inserido manualmente
-      eapData.push([]); // Linha 2 - Espaço para logo
-      eapData.push(['NOME DA EMPRESA']); // Linha 3 - Nome da empresa
-      eapData.push([]); // Linha 4 - Espaço
-      
-      // Informações do projeto (linhas 5-10)
-      eapData.push(['ESTRUTURA ANALÍTICA DO PROJETO (EAP)']);
-      eapData.push([]); // Linha 6 - Espaço
-      eapData.push(['Cliente:', orcamento.cliente || '']);
-      eapData.push(['Obra:', orcamento.nome || '']);
-      eapData.push(['Data da Exportação:', new Date().toLocaleDateString('pt-BR')]);
-      eapData.push(['Elaborador:', currentUser?.email || 'Usuário']);
-      eapData.push([]); // Linha 11 - Espaço
-      
-      // Informações adicionais do orçamento (linhas 12-15)
-      eapData.push(['Endereço:', orcamento.endereco || '']);
-      eapData.push(['Data do Orçamento:', new Date(orcamento.data).toLocaleDateString('pt-BR')]);
-      eapData.push(['Status:', orcamento.status || 'Em Análise']);
-      if (orcamento.ultimaAtualizacaoEAP) {
-        eapData.push(['Última Atualização:', formatarDataAmigavel(orcamento.ultimaAtualizacaoEAP)]);
-      }
-      eapData.push([]); // Linha 16 - Espaço
-      
-      // Resumo financeiro (linhas 17-19)
-      eapData.push(['RESUMO FINANCEIRO']);
-      eapData.push(['Valor Total (sem BDI):', valorTotal]);
-      if (orcamento.bdiConfig) {
-        const { lucro, tributos, financeiro, garantias } = orcamento.bdiConfig;
-        const bdi = (1 + lucro/100) * (1 + tributos/100) * (1 + financeiro/100) * (1 + garantias/100) - 1;
-        eapData.push(['BDI Aplicado:', `${(bdi * 100).toFixed(2)}%`]);
-        eapData.push(['Valor Total (com BDI):', valorTotalComBDI]);
-      }
-      eapData.push([]); // Linha 20 - Espaço
-      
-      // === TABELA PRINCIPAL DA EAP ===
-      // Cabeçalhos da tabela (linha 21)
-      eapData.push([
-        'Pacote/Subgrupo',
-        'Composição',
-        'Quantidade',
-        'Unidade',
-        'Material',
-        'Mão de Obra',
-        'Equipamento',
-        'Serviço',
-        'Total',
-        '%'
-      ]);
-
-      // Dados da EAP (linhas 22+)
-      todosPacotes.forEach((pacote) => {
-        const subgrupos = (pacote.subgrupos || []).sort((a, b) => a.ordem - b.ordem);
-        
-        subgrupos.forEach((subgrupo) => {
-          const itens = obterComposicoesDoSubgrupo(pacote.id, subgrupo.id);
-          
-          itens.forEach((comp) => {
-            const { subvalores, total } = calcularSubvaloresComposicao(comp);
-            const porcentagem = valorTotal > 0 ? ((total / valorTotal) * 100).toFixed(1) : '0.0';
-            
-            eapData.push([
-              `${pacote.nome} > ${subgrupo.nome}`,
-              comp.nome,
-              comp.quantidade,
-              comp.unidade,
-              subvalores.Material,
-              subvalores['Mão de Obra'],
-              subvalores.Equipamento,
-              subvalores.Serviço,
-              total,
-              `${porcentagem}%`
-            ]);
-          });
-        });
-      });
-
-      // Resumo por pacote
-      eapData.push([]); // Linha em branco
-      eapData.push(['RESUMO POR PACOTE']);
-      eapData.push(['Pacote', 'Valor Total', '%']);
-      
-      todosPacotes.forEach((pacote) => {
-        const totalPacote = totalDoPacote(pacote.id);
-        const porcentagemPacote = valorTotal > 0 ? ((totalPacote / valorTotal) * 100).toFixed(1) : '0.0';
-        
-        eapData.push([
-          pacote.nome,
-          totalPacote,
-          `${porcentagemPacote}%`
+      const data = [];
+      data.push(['ESTRUTURA ANALÍTICA DO PROJETO (EAP)']);
+      data.push(['Cliente:', orcamento.cliente || '']);
+      data.push(['Obra:', orcamento.nome || '']);
+      data.push(['Valor Total:', valorTotal]);
+      if (orcamento.bdiConfig) data.push(['Valor c/ BDI:', valorComBDI]);
+      data.push(['Material:', totaisPorCategoria.Material]);
+      data.push(['Mão de Obra:', totaisPorCategoria['Mão de Obra']]);
+      data.push(['Equipamento:', totaisPorCategoria.Equipamento]);
+      data.push(['Serviço:', totaisPorCategoria.Serviço]);
+      data.push([]);
+      data.push(['Caminho', 'Composição', 'Quantidade', 'Unidade', 'Material', 'Mão de Obra', 'Equipamento', 'Serviço', 'Total', '%']);
+      iterarComposicoesExport((p, g, s, c) => {
+        const caminho = [p.nome, g?.nome, s?.nome].filter(Boolean).join(' > ');
+        const sub = calcularSubvalores(c);
+        const pct = valorTotal > 0 ? ((c.custoTotal / valorTotal) * 100).toFixed(1) : '0.0';
+        data.push([
+          caminho, c.nome, c.quantidade, c.unidade,
+          sub.Material, sub['Mão de Obra'], sub.Equipamento, sub.Serviço,
+          c.custoTotal, `${pct}%`
         ]);
       });
-
-      // Valor total final
-      eapData.push([]);
-      eapData.push(['VALOR TOTAL (sem BDI)', valorTotal]);
-      if (orcamento.bdiConfig) {
-        eapData.push(['VALOR TOTAL (com BDI)', valorTotalComBDI]);
-      }
-
-      // Criar worksheet da EAP
-      const eapWorksheet = XLSX.utils.aoa_to_sheet(eapData);
-      
-      // Configurar larguras das colunas
-      const columnWidths = [
-        { wch: 40 }, // Pacote/Subgrupo
-        { wch: 50 }, // Composição
-        { wch: 12 }, // Quantidade
-        { wch: 12 }, // Unidade
-        { wch: 15 }, // Material
-        { wch: 15 }, // Mão de Obra
-        { wch: 15 }, // Equipamento
-        { wch: 15 }, // Serviço
-        { wch: 15 }, // Total
-        { wch: 10 }  // %
-      ];
-      eapWorksheet['!cols'] = columnWidths;
-      
-      XLSX.utils.book_append_sheet(workbook, eapWorksheet, 'EAP');
-
-      // Salvar o arquivo Excel
-      const fileName = `EAP_${orcamento.nome.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().split('T')[0]}.xlsx`;
-      XLSX.writeFile(workbook, fileName);
-
-    } catch (error) {
-      console.error('Erro ao gerar Excel:', error);
-      alert('Erro ao gerar Excel. Verifique o console para mais detalhes.');
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(data), 'EAP');
+      XLSX.writeFile(wb, `EAP_${(orcamento.nome || 'orcamento').replace(/[^a-zA-Z0-9]/g, '_')}.xlsx`);
+    } catch (e) {
+      console.error(e);
+      alert('Erro ao gerar Excel');
     }
   };
 
-  if (!orcamento) {
-    return <div>Carregando...</div>;
-  }
+  const catalogoFiltrado = catalogoComposicoes.filter((c) => {
+    const t = compSearch.toLowerCase();
+    return (c.codigo || '').toLowerCase().includes(t) || (c.nome || '').toLowerCase().includes(t);
+  });
 
-  const todosPacotes = (orcamento.pacotes || []).sort((a, b) => a.ordem - b.ordem);
+  if (!orcamento && !error) return <div className="p-4">Carregando EAP...</div>;
+  if (!orcamento) return <Alert variant="danger" className="m-3">{error}</Alert>;
 
   return (
     <div>
-      {/* Cabeçalho Principal */}
-      <div className="eap-header">
-        {/* Botão Voltar e Título */}
-        <div className="d-flex justify-content-between align-items-start mb-3">
-          <div>
-            <Button 
-              variant="outline-secondary" 
-              onClick={() => navigate('/orcamentos')}
-              className="mb-3"
-            >
-              <FaArrowLeft className="me-2" />
-              Voltar aos Orçamentos
-            </Button>
-            <h1 className="mb-2"><FaFolder className="me-2" />EAP - {orcamento.nome}</h1>
-            <p className="text-muted mb-1">
-              Cliente: {orcamento.cliente} | Data: {new Date(orcamento.data).toLocaleDateString('pt-BR')}
-            </p>
-            {orcamento.ultimaAtualizacaoEAP && (
-              <p className="text-muted mb-2">
-                Última atualização: {formatarDataAmigavel(orcamento.ultimaAtualizacaoEAP)}
-              </p>
-            )}
-          </div>
-          
-          {/* Status */}
-          <div className="d-flex align-items-center gap-2">
-            <span className="text-muted">Status:</span>
-            <Dropdown>
-              <Dropdown.Toggle 
-                variant={getStatusColor(orcamento.status)} 
-                size="sm"
-                disabled={loading}
-              >
-                {orcamento.status || 'Em Análise'}
-              </Dropdown.Toggle>
-              <Dropdown.Menu>
-                <Dropdown.Item 
-                  onClick={() => atualizarStatus('Em Análise')}
-                  active={orcamento.status === 'Em Análise'}
-                >
-                  Em Análise
-                </Dropdown.Item>
-                <Dropdown.Item 
-                  onClick={() => atualizarStatus('Concluído')}
-                  active={orcamento.status === 'Concluído'}
-                >
-                  Concluído
-                </Dropdown.Item>
-              </Dropdown.Menu>
-            </Dropdown>
-          </div>
-        </div>
+      {somenteLeitura && (
+        <Alert variant="warning">
+          Revisão <strong>{formatRevisao(getRevisao(orcamento))}</strong> travada (somente leitura).
+          Crie uma nova revisão na lista de orçamentos ou pelo botão abaixo para editar.
+        </Alert>
+      )}
+      {error && <Alert variant="danger" dismissible onClose={() => setError('')}>{error}</Alert>}
+      {success && <Alert variant="success" dismissible onClose={() => setSuccess('')}>{success}</Alert>}
 
-        {/* Botões de Ação - Organizados em Grupos */}
-        <div className="row g-3">
-          {/* Grupo 1: Criação de Estrutura */}
-          <div className="col-md-6">
-            <div className="d-flex gap-2 flex-wrap">
-              <Button onClick={() => setShowModalPacote(true)} variant="primary" size="sm">
-                <FaPlus className="me-2" />
-                Criar Pacote
-              </Button>
-              <Button 
-                onClick={() => setShowModalSubgrupo(true)} 
-                variant="info"
-                size="sm"
-                disabled={todosPacotes.length === 0}
-                title={todosPacotes.length === 0 ? "Crie um pacote primeiro" : ""}
-              >
-                <FaPlus className="me-2" />
-                Criar Subgrupo
-              </Button>
-              <Button 
-                onClick={() => setShowModalComposicao(true)} 
-                variant="success"
-                size="sm"
-                disabled={!temSubgrupos()}
-                title={!temSubgrupos() ? "Crie um subgrupo primeiro para adicionar composições" : ""}
-              >
-                <FaLayerGroup className="me-2" />
-                Adicionar Composição
-              </Button>
-            </div>
-          </div>
-          
-          {/* Grupo 2: Configurações e Exportação */}
-          <div className="col-md-6">
-            <div className="d-flex gap-2 flex-wrap justify-content-md-end">
-              <Button 
-                onClick={() => setShowModalBDI(true)} 
-                variant={orcamento.bdiConfig ? "success" : "info"}
-                size="sm"
-                title={orcamento.bdiConfig ? "BDI aplicado - Clique para editar" : "Configurar BDI"}
-              >
-                <FaCalculator className="me-2" />
-                BDI {orcamento.bdiConfig && <span className="badge bg-light text-dark ms-1">✓</span>}
-              </Button>
-              <Button onClick={exportarEAPPdf} variant="secondary" size="sm">
-                <FaFilePdf className="me-2" />
-                Exportar PDF
-              </Button>
-              <Button onClick={exportarEAPExcel} variant="success" size="sm">
-                <FaFileExcel className="me-2" />
-                Exportar Excel
-              </Button>
-              <Button onClick={salvarEAP} variant="warning" size="sm" disabled={loading}>
-                <FaSave className="me-2" />
-                {loading ? 'Salvando...' : 'Salvar EAP'}
-              </Button>
-            </div>
-          </div>
-        </div>
-      </div>
+      <EapWorkspace
+        orcamento={orcamento}
+        setOrcamento={setOrcamento}
+        abertos={abertos}
+        toggleAberto={toggleAberto}
+        valorTotal={valorTotal}
+        valorComBDI={valorComBDI}
+        totaisPorCategoria={totaisPorCategoria}
+        calcularBDI={calcularBDI}
+        calcularSubvalores={calcularSubvalores}
+        abrirCriarNo={abrirCriarNo}
+        abrirEditarNo={abrirEditarNo}
+        removerPacote={removerPacote}
+        removerGrupo={removerGrupo}
+        removerSubgrupo={removerSubgrupo}
+        abrirAddComp={abrirAddComp}
+        abrirEditComp={abrirEditComp}
+        removerComposicao={removerComposicao}
+        atualizarQtdInline={atualizarQtdInline}
+        salvarEAP={salvarEAP}
+        loading={loading}
+        navigate={navigate}
+        orcamentoId={orcamentoId}
+        exportarEAPPdf={exportarEAPPdf}
+        exportarEAPExcel={exportarEAPExcel}
+        setShowBdi={setShowBdi}
+        atualizarStatus={atualizarStatus}
+        getStatusColor={getStatusColor}
+        formatarDataAmigavel={formatarDataAmigavel}
+        activeDragId={activeDragId}
+        setActiveDragId={setActiveDragId}
+        somenteLeitura={somenteLeitura}
+        formatRevisao={formatRevisao}
+        getRevisao={getRevisao}
+        onNovaRevisao={handleNovaRevisao}
+      />
 
-      {error && <Alert variant="danger">{error}</Alert>}
-
-      {/* EAP: Pacotes, Subgrupos e Composições */}
-      <Card>
-        <Card.Header>
-          <div className="d-flex justify-content-between align-items-center">
-            <div>
-              <FaFolder className="me-2" /> Estrutura Analítica do Projeto (EAP)
-            </div>
-            <div className="d-flex gap-2">
-              <Button 
-                size="sm" 
-                variant="outline-secondary"
-                onClick={abrirTodosPacotes}
-              >
-                Abrir Todos
-              </Button>
-              <Button 
-                size="sm" 
-                variant="outline-secondary"
-                onClick={fecharTodosPacotes}
-              >
-                Fechar Todos
-              </Button>
-              <Button 
-                size="sm" 
-                variant="outline-info"
-                onClick={() => navigate(`/orcamentos/${orcamentoId}/curva-abc`)}
-              >
-                <FaChartBar className="me-2" />
-                Curva ABC
-              </Button>
-            </div>
-          </div>
-        </Card.Header>
-        <Card.Body>
-          {todosPacotes.length === 0 ? (
-            <div className="text-center py-4">
-              <FaFolder size={48} className="text-muted mb-3" />
-              <p className="text-muted">Nenhum pacote criado. Crie um pacote para começar a organizar sua EAP.</p>
-              <Button onClick={() => setShowModalPacote(true)} variant="outline-primary">
-                Criar Primeiro Pacote
-              </Button>
-            </div>
-          ) : (
-            <div>
-              {todosPacotes.map((pacote, pIdx) => {
-                const subgrupos = (pacote.subgrupos || []).sort((a, b) => a.ordem - b.ordem);
-                const isAberto = pacotesAbertos.has(pacote.id);
-                
-                return (
-                  <Card key={pacote.id} className="mb-3">
-                    <Card.Header 
-                      style={{cursor: 'pointer'}}
-                      onClick={() => togglePacote(pacote.id)}
-                      className="d-flex justify-content-between align-items-center"
-                    >
-                      <div className="d-flex align-items-center">
-                        <FaFolder className="me-2" />
-                        <span>
-                          <strong>{pacote.nome}</strong>
-                          <Badge bg="secondary" className="ms-2">
-                            {obterComposicoesDoPacote(pacote.id).length} comp.
-                          </Badge>
-                        </span>
-                      </div>
-                      <div className="d-flex align-items-center" style={{gap: '8px'}}>
-                        <Button 
-                          size="sm" 
-                          variant="outline-secondary" 
-                          onClick={(e) => { e.stopPropagation(); moverPacote(pacote.id, 'up'); }}
-                        >
-                          <FaArrowUp />
-                        </Button>
-                        <Button 
-                          size="sm" 
-                          variant="outline-secondary" 
-                          onClick={(e) => { e.stopPropagation(); moverPacote(pacote.id, 'down'); }}
-                        >
-                          <FaArrowDown />
-                        </Button>
-                        <Button 
-                          size="sm" 
-                          variant="outline-primary" 
-                          onClick={(e) => { 
-                            e.stopPropagation(); 
-                            setEditingPacote(pacote);
-                            setNovoPacoteNome(pacote.nome);
-                            setShowModalPacote(true);
-                          }}
-                        >
-                          <FaEdit />
-                        </Button>
-                        <Button 
-                          size="sm" 
-                          variant="outline-danger" 
-                          onClick={(e) => { e.stopPropagation(); removerPacote(pacote.id); }}
-                        >
-                          <FaTrash />
-                        </Button>
-                                        <div className="text-end">
-                  <div className="fw-bold">{formatarValor(totalDoPacote(pacote.id))}</div>
-                  <small className="text-secondary">
-                    {(() => {
-                      const valorTotal = calcularValorTotal();
-                      const totalPacote = totalDoPacote(pacote.id);
-                      if (valorTotal > 0) {
-                        const porcentagem = (totalPacote / valorTotal) * 100;
-                        return porcentagem < 0.1 ? '<0.1' : porcentagem.toFixed(1);
-                      }
-                      return '0.0';
-                    })()}%
-                  </small>
-                </div>
-                      </div>
-                    </Card.Header>
-                    
-                    {isAberto && (
-                      <Card.Body>
-                        {/* Subgrupos */}
-                        {subgrupos.map((subgrupo, sIdx) => {
-                          const itens = obterComposicoesDoSubgrupo(pacote.id, subgrupo.id);
-                          return (
-                            <div key={subgrupo.id} className="mb-3">
-                              <div className="d-flex justify-content-between align-items-center mb-2">
-                                <h6 className="mb-0">
-                                  <strong>{subgrupo.nome}</strong>
-                                  <Badge bg="info" className="ms-2">{itens.length} comp.</Badge>
-                                </h6>
-                                <div className="d-flex align-items-center" style={{gap: '6px'}}>
-                                  <Button 
-                                    size="sm" 
-                                    variant="outline-secondary" 
-                                    onClick={() => moverSubgrupo(pacote.id, subgrupo.id, 'up')}
-                                  >
-                                    <FaArrowUp />
-                                  </Button>
-                                  <Button 
-                                    size="sm" 
-                                    variant="outline-secondary" 
-                                    onClick={() => moverSubgrupo(pacote.id, subgrupo.id, 'down')}
-                                  >
-                                    <FaArrowDown />
-                                  </Button>
-                                  <Button 
-                                    size="sm" 
-                                    variant="outline-primary" 
-                                    onClick={() => {
-                                      setEditingSubgrupo({...subgrupo, pacoteId: pacote.id});
-                                      setNovoSubgrupoNome(subgrupo.nome);
-                                      setShowModalSubgrupo(true);
-                                    }}
-                                  >
-                                    <FaEdit />
-                                  </Button>
-                                  <Button 
-                                    size="sm" 
-                                    variant="outline-danger" 
-                                    onClick={() => removerSubgrupo(pacote.id, subgrupo.id)}
-                                  >
-                                    <FaTrash />
-                                  </Button>
-                                  <div className="text-end">
-                                    <div className="fw-bold text-info">
-                                      {formatarValor(totalDoSubgrupo(pacote.id, subgrupo.id))}
-                                    </div>
-                                    <small className="text-secondary">
-                                      {(() => {
-                                        const valorTotal = calcularValorTotal();
-                                        const totalSubgrupo = totalDoSubgrupo(pacote.id, subgrupo.id);
-                                        if (valorTotal > 0) {
-                                          const porcentagem = (totalSubgrupo / valorTotal) * 100;
-                                          return porcentagem < 0.1 ? '<0.1' : porcentagem.toFixed(1);
-                                        }
-                                        return '0.0';
-                                      })()}%
-                                    </small>
-                                  </div>
-                                </div>
-                              </div>
-                              
-                              {itens.length === 0 ? (
-                                <div className="text-muted ms-3">Sem composições neste subgrupo.</div>
-                              ) : (
-                                <div>
-                                  {/* Cabeçalho das colunas */}
-                                  <div className="d-flex bg-light py-2 mb-2 rounded" style={{width: '100%'}}>
-                                    <div style={{width: '40%', paddingLeft: '15px'}}>
-                                      <small className="text-muted fw-bold">COMPOSIÇÃO</small>
-                                    </div>
-                                    <div style={{width: '10%'}} className="text-center">
-                                      <small className="text-muted fw-bold">MATERIAL</small>
-                                    </div>
-                                    <div style={{width: '10%'}} className="text-center">
-                                      <small className="text-muted fw-bold">M.O.</small>
-                                    </div>
-                                    <div style={{width: '10%'}} className="text-center">
-                                      <small className="text-muted fw-bold">EQUIP.</small>
-                                    </div>
-                                    <div style={{width: '10%'}} className="text-center">
-                                      <small className="text-muted fw-bold">SERVIÇO</small>
-                                    </div>
-                                    <div style={{width: '10%'}} className="text-center">
-                                      <small className="text-muted fw-bold">TOTAL</small>
-                                    </div>
-                                    <div style={{width: '5%'}} className="text-center">
-                                      <small className="text-muted fw-bold">%</small>
-                                    </div>
-                                    <div style={{width: '5%'}} className="text-center">
-                                      <small className="text-muted fw-bold">AÇÕES</small>
-                                    </div>
-                                  </div>
-                                  
-                                  <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEndComps(pacote.id, itens)}>
-                                    <SortableContext items={itens.map(i => i.tempId)} strategy={verticalListSortingStrategy}>
-                                      <ListGroup>
-                                      {itens.map((comp) => {
-                                        const { subvalores, total } = calcularSubvaloresComposicao(comp);
-                                        return (
-                                          <SortableComp key={comp.tempId} id={comp.tempId}>
-                                            <ListGroup.Item style={{ borderLeft: 'none', borderRight: 'none', padding: '0' }}>
-                                              <div className="d-flex align-items-center py-1" style={{width: '100%'}}>
-                                                {/* Nome da Composição - 40% */}
-                                                <div style={{width: '40%', paddingLeft: '15px'}}>
-                                                  <strong className="d-block">{comp.nome}</strong>
-                                                  <div className="text-muted" style={{fontSize: '0.85rem'}}>
-                                                    {comp.quantidade} {comp.unidade} × {formatCurrency(comp.custoUnitario)} = {formatCurrency(comp.custoTotal)}
-                                                  </div>
-                                                </div>
-                                                
-                                                {/* Material - 10% */}
-                                                <div style={{width: '10%'}} className="text-center border-start">
-                                                  <strong className="text-primary d-block" style={{fontSize: '0.8rem'}}>{formatarValor(subvalores.Material)}</strong>
-                                                </div>
-                                                
-                                                {/* Mão de Obra - 10% */}
-                                                <div style={{width: '10%'}} className="text-center border-start">
-                                                  <strong className="text-success d-block" style={{fontSize: '0.8rem'}}>{formatarValor(subvalores['Mão de Obra'])}</strong>
-                                                </div>
-                                                
-                                                {/* Equipamento - 10% */}
-                                                <div style={{width: '10%'}} className="text-center border-start">
-                                                  <strong className="text-warning d-block" style={{fontSize: '0.8rem'}}>{formatarValor(subvalores.Equipamento)}</strong>
-                                                </div>
-                                                
-                                                {/* Serviço - 10% */}
-                                                <div style={{width: '10%'}} className="text-center border-start">
-                                                  <strong className="text-info d-block" style={{fontSize: '0.8rem'}}>{formatarValor(subvalores.Serviço)}</strong>
-                                                </div>
-                                                
-                                                {/* Total - 10% */}
-                                                <div style={{width: '10%'}} className="text-center border-start">
-                                                  <strong className="text-dark d-block" style={{fontSize: '0.8rem'}}>{formatarValor(total)}</strong>
-                                                </div>
-                                                
-                                                {/* Porcentagem - 5% */}
-                                                <div style={{width: '5%'}} className="text-center border-start">
-                                                  <strong className="text-secondary d-block" style={{fontSize: '0.8rem'}}>
-                                                    {(() => {
-                                                      const valorTotal = calcularValorTotal();
-                                                      if (valorTotal > 0) {
-                                                        const porcentagem = (total / valorTotal) * 100;
-                                                        return porcentagem < 0.1 ? '<0.1' : porcentagem.toFixed(1);
-                                                        return '0.0';
-                                                      }
-                                                      return '0.0';
-                                                    })()}%
-                                                  </strong>
-                                                </div>
-                                                
-                                                {/* Botão Deletar - 5% */}
-                                                <div style={{width: '5%'}} className="text-center border-start">
-                                                  <Button size="sm" variant="outline-danger" onClick={() => removerComposicao(comp.tempId)}>
-                                                    <FaTrash />
-                                                  </Button>
-                                                </div>
-                                              </div>
-                                            </ListGroup.Item>
-                                          </SortableComp>
-                                        );
-                                      })}
-                                      </ListGroup>
-                                    </SortableContext>
-                                  </DndContext>
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </Card.Body>
-                    )}
-                  </Card>
-                );
-              })}
-            </div>
-          )}
-          <div className="text-end mt-3">
-            <div className="row justify-content-end">
-              <div className="col-auto">
-                <h5 className="mb-2">Valor Total: {formatarValor(calcularValorTotal())}</h5>
-                {orcamento.bdiConfig ? (
-                  <>
-                    <h6 className="text-info mb-2">
-                      BDI ({calcularBDI().toFixed(1)}%): {formatarValor(calcularValorBDI())}
-                      <span className="badge bg-success ms-2">Aplicado</span>
-                    </h6>
-                    <h4 className="text-success">Total com BDI: {formatarValor(calcularValorTotalComBDI())}</h4>
-                  </>
-                ) : (
-                  <h6 className="text-muted mb-2">
-                    BDI não configurado - Clique no botão BDI para configurar
-                  </h6>
-                )}
-              </div>
-            </div>
-          </div>
-        </Card.Body>
-      </Card>
-
-      {/* Modal para Criar/Editar Pacote */}
-      <Modal show={showModalPacote} onHide={() => {
-        setShowModalPacote(false);
-        setEditingPacote(null);
-        setNovoPacoteNome('');
-      }}>
-        <Modal.Header closeButton>
-          <Modal.Title>
-            {editingPacote ? 'Editar Pacote' : 'Novo Pacote'}
-          </Modal.Title>
-        </Modal.Header>
-        <Modal.Body>
-          <Form.Group>
-            <Form.Label>Nome do Pacote *</Form.Label>
-            <Form.Control
-              type="text"
-              placeholder="Ex: Fundação, Estrutura, Alvenaria..."
-              value={novoPacoteNome}
-              onChange={(e) => setNovoPacoteNome(e.target.value)}
-              autoFocus
-            />
-          </Form.Group>
-        </Modal.Body>
-        <Modal.Footer>
-          <Button variant="secondary" onClick={() => {
-            setShowModalPacote(false);
-            setEditingPacote(null);
-            setNovoPacoteNome('');
-          }}>
-            Cancelar
-          </Button>
-          <Button 
-            variant="primary" 
-            onClick={editingPacote ? editarPacote : criarPacote}
-            disabled={!novoPacoteNome.trim()}
-          >
-            {editingPacote ? 'Atualizar' : 'Criar'}
-          </Button>
-        </Modal.Footer>
-      </Modal>
-
-      {/* Modal para Criar/Editar Subgrupo */}
-      <Modal show={showModalSubgrupo} onHide={() => {
-        setShowModalSubgrupo(false);
-        setEditingSubgrupo(null);
-        setNovoSubgrupoNome('');
-        setPacoteParaSubgrupo(null);
-      }}>
-        <Modal.Header closeButton>
-          <Modal.Title>
-            {editingSubgrupo ? 'Editar Subgrupo' : 'Novo Subgrupo'}
-          </Modal.Title>
-        </Modal.Header>
-        <Modal.Body>
-          {!editingSubgrupo && (
-            <Form.Group className="mb-3">
-              <Form.Label>Pacote de Destino *</Form.Label>
-              <Form.Select
-                value={pacoteParaSubgrupo?.id || ''}
-                onChange={(e) => {
-                  const pacote = todosPacotes.find(p => p.id === e.target.value);
-                  setPacoteParaSubgrupo(pacote);
-                }}
-              >
-                <option value="">Selecione um pacote...</option>
-                {todosPacotes.map(pacote => (
-                  <option key={pacote.id} value={pacote.id}>{pacote.nome}</option>
-                ))}
-              </Form.Select>
+      <Modal show={showModalNo} onHide={() => setShowModalNo(false)}>
+        <Form onSubmit={salvarNo}>
+          <Modal.Header closeButton>
+            <Modal.Title>
+              {editingNo ? 'Editar' : 'Novo'}{' '}
+              {modalNoTipo === 'pacote' ? 'Pacote' : modalNoTipo === 'grupo' ? 'Grupo' : 'Subgrupo'}
+            </Modal.Title>
+          </Modal.Header>
+          <Modal.Body>
+            <Form.Group>
+              <Form.Label>Nome</Form.Label>
+              <Form.Control value={modalNoNome} onChange={(e) => setModalNoNome(e.target.value)} required autoFocus />
             </Form.Group>
-          )}
-          <Form.Group>
-            <Form.Label>Nome do Subgrupo *</Form.Label>
-            <Form.Control
-              type="text"
-              placeholder="Ex: Escavação, Concreto, Alvenaria..."
-              value={novoSubgrupoNome}
-              onChange={(e) => setNovoSubgrupoNome(e.target.value)}
-              autoFocus
-            />
-          </Form.Group>
-        </Modal.Body>
-        <Modal.Footer>
-          <Button variant="secondary" onClick={() => {
-            setShowModalSubgrupo(false);
-            setEditingSubgrupo(null);
-            setNovoSubgrupoNome('');
-            setPacoteParaSubgrupo(null);
-          }}>
-            Cancelar
-          </Button>
-          <Button 
-            variant="primary" 
-            onClick={editingSubgrupo ? editarSubgrupo : criarSubgrupo}
-            disabled={!novoSubgrupoNome.trim() || (!editingSubgrupo && !pacoteParaSubgrupo)}
-          >
-            {editingSubgrupo ? 'Atualizar' : 'Criar'}
-          </Button>
-        </Modal.Footer>
+          </Modal.Body>
+          <Modal.Footer>
+            <Button variant="secondary" onClick={() => setShowModalNo(false)}>Cancelar</Button>
+            <Button type="submit" variant="primary">Salvar</Button>
+          </Modal.Footer>
+        </Form>
       </Modal>
 
-      {/* Modal para Adicionar Composição */}
-      <Modal show={showModalComposicao} onHide={() => {
-        setShowModalComposicao(false);
-        setNovaComposicao({
-          composicaoId: '',
-          quantidade: '',
-          custoUnitario: '',
-          pacoteId: '',
-          subgrupoId: ''
-        });
-      }}>
-        <Modal.Header closeButton>
-          <Modal.Title>Adicionar Composição</Modal.Title>
-        </Modal.Header>
-        <Modal.Body>
-          <Form.Group className="mb-3">
-            <Form.Label>Composição *</Form.Label>
-            <Form.Select
-              value={novaComposicao.composicaoId}
-              onChange={(e) => {
-                const selectedId = e.target.value;
-                const selected = composicoes.find(c => c.id === selectedId);
-                setNovaComposicao({
-                  ...novaComposicao,
-                  composicaoId: selectedId,
-                  custoUnitario: selected && selected.valorTotal != null ? selected.valorTotal : ''
-                });
-              }}
-            >
-              <option value="">Selecione...</option>
-              {composicoes.map(composicao => (
-                <option key={composicao.id} value={composicao.id}>
-                  {composicao.nome} ({composicao.unidade})
-                </option>
-              ))}
-            </Form.Select>
-          </Form.Group>
-
-          <Form.Group className="mb-3">
-            <Form.Label>Quantidade *</Form.Label>
-            <Form.Control
-              type="number"
-              step="0.01"
-              min="0"
-              value={novaComposicao.quantidade}
-              onChange={(e) => setNovaComposicao({...novaComposicao, quantidade: e.target.value})}
-            />
-          </Form.Group>
-
-          <Form.Group className="mb-3">
-            <Form.Label>Custo Unitário (R$) *</Form.Label>
-            <Form.Control
-              type="number"
-              step="0.01"
-              min="0"
-              value={novaComposicao.custoUnitario}
-              onChange={(e) => setNovaComposicao({...novaComposicao, custoUnitario: e.target.value})}
-            />
-          </Form.Group>
-
-          <Form.Group className="mb-3">
-            <Form.Label>Pacote de Destino *</Form.Label>
-            <Form.Select
-              value={novaComposicao.pacoteId}
-              onChange={(e) => setNovaComposicao({...novaComposicao, pacoteId: e.target.value, subgrupoId: ''})}
-            >
-              <option value="">Selecione...</option>
-              {todosPacotes.map(pacote => (
-                <option key={pacote.id} value={pacote.id}>{pacote.nome}</option>
-              ))}
-            </Form.Select>
-          </Form.Group>
-
-          <Form.Group className="mb-3">
-            <Form.Label>Subgrupo *</Form.Label>
-            <Form.Select
-              value={novaComposicao.subgrupoId}
-              onChange={(e) => setNovaComposicao({...novaComposicao, subgrupoId: e.target.value})}
-              disabled={!novaComposicao.pacoteId}
-            >
-              <option value="">Selecione um subgrupo...</option>
-              {novaComposicao.pacoteId && todosPacotes.find(p => p.id === novaComposicao.pacoteId)?.subgrupos?.map(subgrupo => (
-                <option key={subgrupo.id} value={subgrupo.id}>{subgrupo.nome}</option>
-              ))}
-            </Form.Select>
-          </Form.Group>
-        </Modal.Body>
-        <Modal.Footer>
-          <Button variant="secondary" onClick={() => {
-            setShowModalComposicao(false);
-            setNovaComposicao({
-              composicaoId: '',
-              quantidade: '',
-              custoUnitario: '',
-              pacoteId: '',
-              subgrupoId: ''
-            });
-          }}>
-            Cancelar
-          </Button>
-          <Button 
-            variant="primary" 
-            onClick={adicionarComposicao}
-            disabled={!novaComposicao.composicaoId || !novaComposicao.quantidade || !novaComposicao.custoUnitario || !novaComposicao.pacoteId || !novaComposicao.subgrupoId}
-          >
-            Adicionar Composição
-          </Button>
-        </Modal.Footer>
-      </Modal>
-
-      {/* Modal para Configurar BDI */}
-      <Modal show={showModalBDI} onHide={() => setShowModalBDI(false)} size="lg">
-        <Modal.Header closeButton>
-          <Modal.Title>
-            <FaCalculator className="me-2" />
-            Configurar BDI (Benefícios e Despesas Indiretas)
-            {orcamento.bdiConfig && (
-              <span className="badge bg-success ms-2">Aplicado</span>
-            )}
-          </Modal.Title>
-        </Modal.Header>
-        <Modal.Body>
-          <div className="row">
-            <div className="col-md-6">
-              <h6 className="mb-3">Parâmetros do BDI</h6>
-              
-              <Form.Group className="mb-3">
-                <Form.Label>Lucro (%)</Form.Label>
-                <Form.Control
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  max="100"
-                  value={bdiConfig.lucro}
-                  onChange={(e) => setBdiConfig({...bdiConfig, lucro: parseFloat(e.target.value) || 0})}
-                />
-              </Form.Group>
-
-              <Form.Group className="mb-3">
-                <Form.Label>Tributos (%)</Form.Label>
-                <Form.Control
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  max="100"
-                  value={bdiConfig.tributos}
-                  onChange={(e) => setBdiConfig({...bdiConfig, tributos: parseFloat(e.target.value) || 0})}
-                />
-              </Form.Group>
-
-              <Form.Group className="mb-3">
-                <Form.Label>Financeiro (%)</Form.Label>
-                <Form.Control
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  max="100"
-                  value={bdiConfig.financeiro}
-                  onChange={(e) => setBdiConfig({...bdiConfig, financeiro: parseFloat(e.target.value) || 0})}
-                />
-              </Form.Group>
-
-              <Form.Group className="mb-3">
-                <Form.Label>Garantias (%)</Form.Label>
-                <Form.Control
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  max="100"
-                  value={bdiConfig.garantias}
-                  onChange={(e) => setBdiConfig({...bdiConfig, garantias: parseFloat(e.target.value) || 0})}
-                />
-              </Form.Group>
-              
-              <div className="text-center mt-3">
-                <Button 
-                  variant="outline-secondary" 
-                  size="sm"
-                  onClick={() => {
-                    setBdiConfig({
-                      lucro: 20,
-                      tributos: 35,
-                      financeiro: 5,
-                      garantias: 2
-                    });
-                  }}
+      <Modal show={showModalComp} onHide={() => setShowModalComp(false)} size="lg">
+        <Form onSubmit={salvarComposicao}>
+          <Modal.Header closeButton>
+            <Modal.Title>{editingComp ? 'Editar composição' : 'Adicionar composição'}</Modal.Title>
+          </Modal.Header>
+          <Modal.Body>
+            <InputGroup className="mb-3">
+              <Form.Control placeholder="Buscar no catálogo..." value={compSearch} onChange={(e) => setCompSearch(e.target.value)} />
+            </InputGroup>
+            <div style={{ maxHeight: 280, overflowY: 'auto' }} className="mb-3 border rounded">
+              {catalogoFiltrado.slice(0, 80).map((c) => (
+                <div
+                  key={c.id}
+                  className={`p-2 border-bottom ${compForm.composicaoId === c.id ? 'bg-primary text-white' : ''}`}
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => setCompForm((f) => ({ ...f, composicaoId: c.id }))}
                 >
-                  Resetar para Valores Padrão
-                </Button>
-              </div>
+                  <div className="fw-bold">{c.codigo ? `${c.codigo} — ` : ''}{c.nome}</div>
+                  <small>{c.unidade} · {formatCurrency(c.valorTotal || 0)}</small>
+                </div>
+              ))}
             </div>
+            <Form.Group>
+              <Form.Label>Quantidade</Form.Label>
+              <Form.Control
+                type="number" min="0" step="0.01" required
+                value={compForm.quantidade}
+                onChange={(e) => setCompForm((f) => ({ ...f, quantidade: e.target.value }))}
+              />
+            </Form.Group>
+          </Modal.Body>
+          <Modal.Footer>
+            <Button variant="secondary" onClick={() => setShowModalComp(false)}>Cancelar</Button>
+            <Button type="submit" variant="primary" disabled={!compForm.composicaoId}>Salvar</Button>
+          </Modal.Footer>
+        </Form>
+      </Modal>
 
-            <div className="col-md-6">
-              <h6 className="mb-3">Resultados</h6>
-              
-              <div className="card bg-light p-3">
-                <div className="row mb-2">
-                  <div className="col-6">
-                    <strong>Valor Total da EAP:</strong>
-                  </div>
-                  <div className="col-6 text-end">
-                    {formatarValor(calcularValorTotal())}
-                  </div>
-                </div>
-                
-                <div className="row mb-2">
-                  <div className="col-6">
-                    <strong>BDI Calculado:</strong>
-                  </div>
-                  <div className="col-6 text-end text-info">
-                    {calcularBDI().toFixed(1)}%
-                  </div>
-                </div>
-                
-                <div className="row mb-2">
-                  <div className="col-6">
-                    <strong>Valor do BDI:</strong>
-                  </div>
-                  <div className="col-6 text-end text-info">
-                    {formatarValor(calcularValorBDI())}
-                  </div>
-                </div>
-                
-                <div className="row">
-                  <div className="col-6">
-                    <strong>Total com BDI:</strong>
-                  </div>
-                  <div className="col-6 text-end text-success">
-                    <strong>{formatarValor(calcularValorTotalComBDI())}</strong>
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-3">
-                <h6>Fórmula Aplicada:</h6>
-                <small className="text-muted">
-                  BDI = (1 + {bdiConfig.lucro/100}) × (1 + {bdiConfig.tributos/100}) × (1 + {bdiConfig.financeiro/100}) × (1 + {bdiConfig.garantias/100}) - 1
-                </small>
-                <br />
-                <small className="text-muted">
-                  BDI = {((1 + bdiConfig.lucro/100) * (1 + bdiConfig.tributos/100) * (1 + bdiConfig.financeiro/100) * (1 + bdiConfig.garantias/100) - 1).toFixed(4)} = {calcularBDI().toFixed(1)}%
-                </small>
-              </div>
-            </div>
-          </div>
+      <Modal show={showBdi} onHide={() => setShowBdi(false)}>
+        <Modal.Header closeButton><Modal.Title>Configurar BDI</Modal.Title></Modal.Header>
+        <Modal.Body>
+          {['lucro', 'tributos', 'financeiro', 'garantias'].map((campo) => (
+            <Form.Group className="mb-3" key={campo}>
+              <Form.Label className="text-capitalize">{campo} (%)</Form.Label>
+              <Form.Control
+                type="number" step="0.01" value={bdiConfig[campo]}
+                onChange={(e) => setBdiConfig({ ...bdiConfig, [campo]: parseFloat(e.target.value) || 0 })}
+              />
+            </Form.Group>
+          ))}
+          <Alert variant="info" className="mb-0">
+            BDI = {calcularBDI().toFixed(2)}% · Total c/ BDI: {formatCurrency(valorComBDI)}
+          </Alert>
         </Modal.Body>
         <Modal.Footer>
-          <Button variant="secondary" onClick={() => setShowModalBDI(false)}>
-            Fechar
-          </Button>
-          {orcamento.bdiConfig && (
-            <Button 
-              variant="danger" 
-              onClick={() => {
-                if (window.confirm('Tem certeza que deseja remover o BDI aplicado?')) {
-                  setBdiConfig({ lucro: 0, tributos: 0, financeiro: 0, garantias: 0 });
-                  setOrcamento(prev => ({
-                    ...prev,
-                    bdiConfig: null
-                  }));
-                  setShowModalBDI(false);
-                  alert('BDI removido com sucesso! Clique em "Salvar EAP" para persistir as alterações.');
-                }
-              }}
-            >
-              Remover BDI
-            </Button>
+          {orcamento?.bdiConfig && (
+            <Button variant="outline-danger" className="me-auto" onClick={() => {
+              setOrcamento((prev) => ({ ...prev, bdiConfig: null }));
+              setShowBdi(false);
+            }}>Remover BDI</Button>
           )}
-          <Button 
-            variant="primary" 
-            onClick={() => {
-              // Salvar as configurações do BDI no estado local
-              setOrcamento(prev => ({
-                ...prev,
-                bdiConfig: bdiConfig
-              }));
-              setShowModalBDI(false);
-              alert('BDI aplicado com sucesso! Clique em "Salvar EAP" para persistir as alterações.');
-            }}
-          >
-            Aplicar BDI
-          </Button>
+          <Button variant="secondary" onClick={() => setShowBdi(false)}>Fechar</Button>
+          <Button variant="primary" onClick={() => {
+            setOrcamento((prev) => ({ ...prev, bdiConfig }));
+            setShowBdi(false);
+          }}>Aplicar</Button>
         </Modal.Footer>
       </Modal>
     </div>

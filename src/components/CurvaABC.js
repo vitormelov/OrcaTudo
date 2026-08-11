@@ -1,11 +1,73 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Table, Badge, Alert, Spinner, Button } from 'react-bootstrap';
-import { FaChartBar, FaExclamationTriangle, FaInfoCircle, FaCheckCircle, FaArrowLeft, FaFilePdf } from 'react-icons/fa';
+import { Card, Table, Badge, Alert, Spinner, Button, Form } from 'react-bootstrap';
+import {
+  FaChartBar,
+  FaExclamationTriangle,
+  FaInfoCircle,
+  FaCheckCircle,
+  FaArrowLeft,
+  FaFilePdf,
+  FaBoxes,
+  FaLayerGroup
+} from 'react-icons/fa';
 import { formatCurrency } from '../utils/formatters';
 import { collection, getDocs, query, where, getDoc, doc } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase/config';
 import { useParams, useNavigate } from 'react-router-dom';
+
+function classificarABC(itens) {
+  const ordenados = (itens || [])
+    .filter((item) => (item.valorTotal || 0) > 0)
+    .sort((a, b) => b.valorTotal - a.valorTotal);
+
+  const valorTotalGeral = ordenados.reduce((sum, item) => sum + item.valorTotal, 0);
+  let valorAcumulado = 0;
+
+  const curva = ordenados.map((item) => {
+    valorAcumulado += item.valorTotal;
+    const percentualAcumulado = valorTotalGeral > 0 ? (valorAcumulado / valorTotalGeral) * 100 : 0;
+    let categoriaABC = 'C';
+    if (percentualAcumulado <= 80) categoriaABC = 'A';
+    else if (percentualAcumulado <= 95) categoriaABC = 'B';
+
+    return {
+      ...item,
+      categoriaABC,
+      percentualAcumulado: percentualAcumulado.toFixed(2),
+      percentualValor: valorTotalGeral > 0
+        ? ((item.valorTotal / valorTotalGeral) * 100).toFixed(2)
+        : '0.00'
+    };
+  });
+
+  const resumo = {
+    totalItens: curva.length,
+    valorTotal: valorTotalGeral,
+    categoriaA: { quantidade: 0, valor: 0, percentual: '0.00' },
+    categoriaB: { quantidade: 0, valor: 0, percentual: '0.00' },
+    categoriaC: { quantidade: 0, valor: 0, percentual: '0.00' }
+  };
+
+  curva.forEach((item) => {
+    const bucket =
+      item.categoriaABC === 'A'
+        ? resumo.categoriaA
+        : item.categoriaABC === 'B'
+          ? resumo.categoriaB
+          : resumo.categoriaC;
+    bucket.quantidade += 1;
+    bucket.valor += item.valorTotal;
+  });
+
+  if (valorTotalGeral > 0) {
+    resumo.categoriaA.percentual = ((resumo.categoriaA.valor / valorTotalGeral) * 100).toFixed(2);
+    resumo.categoriaB.percentual = ((resumo.categoriaB.valor / valorTotalGeral) * 100).toFixed(2);
+    resumo.categoriaC.percentual = ((resumo.categoriaC.valor / valorTotalGeral) * 100).toFixed(2);
+  }
+
+  return { curva, resumo };
+}
 
 const CurvaABC = () => {
   const { currentUser } = useAuth();
@@ -14,225 +76,133 @@ const CurvaABC = () => {
   const [orcamentoNome, setOrcamentoNome] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [curvaABC, setCurvaABC] = useState([]);
-  const [resumo, setResumo] = useState({
-    totalInsumos: 0,
-    valorTotal: 0,
-    categoriaA: { quantidade: 0, valor: 0, percentual: 0 },
-    categoriaB: { quantidade: 0, valor: 0, percentual: 0 },
-    categoriaC: { quantidade: 0, valor: 0, percentual: 0 }
-  });
+  const [modo, setModo] = useState('insumos'); // 'insumos' | 'composicoes'
+  const [curvaInsumos, setCurvaInsumos] = useState([]);
+  const [curvaComposicoes, setCurvaComposicoes] = useState([]);
+  const [resumoInsumos, setResumoInsumos] = useState(null);
+  const [resumoComposicoes, setResumoComposicoes] = useState(null);
 
   useEffect(() => {
     if (orcamentoId && currentUser) {
-      calcularCurvaABC();
+      calcularCurvasABC();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orcamentoId, currentUser]);
 
-
-
-  const calcularCurvaABC = async () => {
+  const calcularCurvasABC = async () => {
     try {
       setLoading(true);
       setError(null);
 
-      // 1. Buscar o orçamento
-      const orcamentoRef = doc(db, 'orcamentos', orcamentoId);
-      const orcamentoSnapshot = await getDoc(orcamentoRef);
-      
+      const orcamentoSnapshot = await getDoc(doc(db, 'orcamentos', orcamentoId));
       if (!orcamentoSnapshot.exists()) {
         throw new Error('Orçamento não encontrado');
       }
 
       const orcamentoData = orcamentoSnapshot.data();
-      setOrcamentoNome(orcamentoData.nome);
-      
-      // Verificar se o usuário é o dono do orçamento
+      setOrcamentoNome(orcamentoData.nome || '');
+
       if (orcamentoData.userId !== currentUser.uid) {
         throw new Error('Acesso negado a este orçamento');
       }
 
-      // Verificar se o orçamento tem estrutura EAP
       if (!orcamentoData.pacotes || orcamentoData.pacotes.length === 0) {
         setError('Este orçamento não possui estrutura EAP configurada. Adicione pacotes e composições na página EAP primeiro.');
         setLoading(false);
         return;
       }
 
+      const [composicoesSnap, insumosSnap] = await Promise.all([
+        getDocs(query(collection(db, 'composicoes'), where('userId', '==', currentUser.uid))),
+        getDocs(query(collection(db, 'insumos'), where('userId', '==', currentUser.uid)))
+      ]);
 
+      const catalogoComposicoes = composicoesSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const insumos = insumosSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const compsOrcamento = orcamentoData.composicoes || [];
 
-      // 2. Buscar todas as composições
-      const composicoesRef = collection(db, 'composicoes');
-      const composicoesQuery = query(composicoesRef, where('userId', '==', currentUser.uid));
-      const composicoesSnapshot = await getDocs(composicoesQuery);
-      const composicoes = composicoesSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-
-      // 3. Buscar todos os insumos
-      const insumosRef = collection(db, 'insumos');
-      const insumosQuery = query(insumosRef, where('userId', '==', currentUser.uid));
-      const insumosSnapshot = await getDocs(insumosQuery);
-      const insumos = insumosSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-
-
-
-      // 4. Calcular consumo de insumos no orçamento
+      // ——— Curva ABC de insumos ———
       const consumoInsumos = {};
-      
+      compsOrcamento.forEach((compOrcamento) => {
+        const qtdComp = parseFloat(compOrcamento.quantidade) || 0;
+        const catalogo = catalogoComposicoes.find((c) => c.id === compOrcamento.composicaoId);
+        const listaInsumos =
+          (compOrcamento.insumos && compOrcamento.insumos.length > 0)
+            ? compOrcamento.insumos
+            : (catalogo?.insumos || []);
 
-      
-      // Verificar se há dados para processar
-      if (!orcamentoData.pacotes || orcamentoData.pacotes.length === 0) {
-        console.log('❌ Nenhum pacote encontrado no orçamento');
-        setError('Este orçamento não possui estrutura EAP configurada.');
-        setLoading(false);
-        return;
-      }
-      
-      // Verificar se há composições para processar
-      let totalComposicoesNoOrcamento = 0;
-      orcamentoData.pacotes.forEach(pacote => {
-        if (pacote.subgrupos) {
-          pacote.subgrupos.forEach(subgrupo => {
-            if (subgrupo.composicoes) {
-              totalComposicoesNoOrcamento += subgrupo.composicoes.length;
-            }
-          });
-        }
-      });
-      
-      console.log(`Total de composições no orçamento: ${totalComposicoesNoOrcamento}`);
-      
-      // Não vamos parar aqui, vamos continuar para ver os logs detalhados
-      
-      // Percorrer todas as composições do orçamento
-      let totalComposicoesProcessadas = 0;
-      let totalInsumosProcessados = 0;
-      
-      if (orcamentoData.composicoes && Array.isArray(orcamentoData.composicoes)) {
-        orcamentoData.composicoes.forEach((compOrcamento, cIdx) => {
-          totalComposicoesProcessadas++;
-          
-          // Usar os insumos diretamente da composição no orçamento
-          if (compOrcamento.insumos && Array.isArray(compOrcamento.insumos)) {
-            compOrcamento.insumos.forEach((item, iIdx) => {
-              totalInsumosProcessados++;
-              
-              const insumoId = item.insumoId;
-              const quantidadeTotal = parseFloat(item.quantidade) * parseFloat(compOrcamento.quantidade);
-              
-              // Inicializar ou acumular o insumo
-              if (!consumoInsumos[insumoId]) {
-                consumoInsumos[insumoId] = {
-                  insumoId,
-                  quantidade: 0,
-                  valorTotal: 0
-                };
-              }
-              
-              consumoInsumos[insumoId].quantidade += quantidadeTotal;
-            });
+        listaInsumos.forEach((item) => {
+          const insumoId = item.insumoId;
+          if (!insumoId) return;
+          const quantidadeTotal = (parseFloat(item.quantidade) || 0) * qtdComp;
+          if (!consumoInsumos[insumoId]) {
+            consumoInsumos[insumoId] = {
+              id: insumoId,
+              quantidade: 0,
+              valorTotal: 0
+            };
           }
+          consumoInsumos[insumoId].quantidade += quantidadeTotal;
         });
-      }
-      
-      console.log('\n=== RESUMO DO PROCESSAMENTO ===');
-      console.log(`Total de composições processadas: ${totalComposicoesProcessadas}`);
-      console.log(`Total de insumos processados: ${totalInsumosProcessados}`);
-      console.log(`Insumos únicos encontrados: ${Object.keys(consumoInsumos).length}`);
-      console.log('Consumo de insumos calculado:', consumoInsumos);
+      });
 
-      // Verificar se há dados para processar
-      if (Object.keys(consumoInsumos).length === 0) {
-        console.log('❌ Nenhum insumo encontrado para processar');
-        console.log('Vamos continuar para ver o que está acontecendo...');
-        // Não vamos parar aqui, vamos continuar para ver os logs
-      }
+      Object.keys(consumoInsumos).forEach((insumoId) => {
+        const insumo = insumos.find((i) => i.id === insumoId);
+        if (!insumo) return;
+        const preco = insumo.precoUnitario || 0;
+        consumoInsumos[insumoId].valorTotal = consumoInsumos[insumoId].quantidade * preco;
+        consumoInsumos[insumoId].nome = insumo.nome;
+        consumoInsumos[insumoId].unidade = insumo.unidade;
+        consumoInsumos[insumoId].categoria = insumo.categoria;
+        consumoInsumos[insumoId].precoUnitario = preco;
+      });
 
-      // 5. Calcular valor total de cada insumo
-      Object.keys(consumoInsumos).forEach(insumoId => {
-        const insumo = insumos.find(i => i.id === insumoId);
-        if (insumo) {
-          consumoInsumos[insumoId].valorTotal = consumoInsumos[insumoId].quantidade * insumo.precoUnitario;
-          consumoInsumos[insumoId].nome = insumo.nome;
-          consumoInsumos[insumoId].unidade = insumo.unidade;
-          consumoInsumos[insumoId].categoria = insumo.categoria;
-          consumoInsumos[insumoId].precoUnitario = insumo.precoUnitario;
+      const abcInsumos = classificarABC(Object.values(consumoInsumos));
+      setCurvaInsumos(abcInsumos.curva);
+      setResumoInsumos(abcInsumos.resumo);
+
+      // ——— Curva ABC de composições ———
+      const consumoComps = {};
+      compsOrcamento.forEach((comp) => {
+        const key = comp.composicaoId || comp.nome || comp.uid || comp.id;
+        if (!key) return;
+        const qtd = parseFloat(comp.quantidade) || 0;
+        const total = parseFloat(comp.custoTotal) || 0;
+        if (!consumoComps[key]) {
+          consumoComps[key] = {
+            id: key,
+            nome: comp.nome || 'Composição',
+            unidade: comp.unidade || '',
+            categoria: 'Composição',
+            quantidade: 0,
+            valorTotal: 0,
+            precoUnitario: parseFloat(comp.custoUnitario) || 0
+          };
+        }
+        consumoComps[key].quantidade += qtd;
+        consumoComps[key].valorTotal += total;
+        if (consumoComps[key].quantidade > 0) {
+          consumoComps[key].precoUnitario =
+            consumoComps[key].valorTotal / consumoComps[key].quantidade;
         }
       });
 
-      // 6. Ordenar por valor total (decrescente)
-      const insumosOrdenados = Object.values(consumoInsumos)
-        .filter(item => item.valorTotal > 0)
-        .sort((a, b) => b.valorTotal - a.valorTotal);
-
-      // 7. Calcular percentual acumulado e classificar ABC
-      const valorTotalGeral = insumosOrdenados.reduce((sum, item) => sum + item.valorTotal, 0);
-      let valorAcumulado = 0;
-
-      const curvaABCCompleta = insumosOrdenados.map(item => {
-        valorAcumulado += item.valorTotal;
-        const percentualAcumulado = (valorAcumulado / valorTotalGeral) * 100;
-        
-        let categoriaABC = 'C';
-        if (percentualAcumulado <= 80) {
-          categoriaABC = 'A';
-        } else if (percentualAcumulado <= 95) {
-          categoriaABC = 'B';
-        }
-
-        return {
-          ...item,
-          categoriaABC,
-          percentualAcumulado: percentualAcumulado.toFixed(2),
-          percentualValor: ((item.valorTotal / valorTotalGeral) * 100).toFixed(2)
-        };
-      });
-
-      // 8. Calcular resumo por categoria
-      const resumoCalculado = {
-        totalInsumos: curvaABCCompleta.length,
-        valorTotal: valorTotalGeral,
-        categoriaA: { quantidade: 0, valor: 0, percentual: 0 },
-        categoriaB: { quantidade: 0, valor: 0, percentual: 0 },
-        categoriaC: { quantidade: 0, valor: 0, percentual: 0 }
-      };
-
-      curvaABCCompleta.forEach(item => {
-        if (item.categoriaABC === 'A') {
-          resumoCalculado.categoriaA.quantidade++;
-          resumoCalculado.categoriaA.valor += item.valorTotal;
-        } else if (item.categoriaABC === 'B') {
-          resumoCalculado.categoriaB.quantidade++;
-          resumoCalculado.categoriaB.valor += item.valorTotal;
-        } else {
-          resumoCalculado.categoriaC.quantidade++;
-          resumoCalculado.categoriaC.valor += item.valorTotal;
-        }
-      });
-
-      // Calcular percentuais
-      resumoCalculado.categoriaA.percentual = ((resumoCalculado.categoriaA.valor / valorTotalGeral) * 100).toFixed(2);
-      resumoCalculado.categoriaB.percentual = ((resumoCalculado.categoriaB.valor / valorTotalGeral) * 100).toFixed(2);
-      resumoCalculado.categoriaC.percentual = ((resumoCalculado.categoriaC.valor / valorTotalGeral) * 100).toFixed(2);
-
-      setCurvaABC(curvaABCCompleta);
-      setResumo(resumoCalculado);
-      
-
-
-    } catch (error) {
-      console.error('Erro ao calcular Curva ABC:', error);
-      setError('Erro ao calcular a Curva ABC: ' + error.message);
+      const abcComps = classificarABC(Object.values(consumoComps));
+      setCurvaComposicoes(abcComps.curva);
+      setResumoComposicoes(abcComps.resumo);
+    } catch (err) {
+      console.error('Erro ao calcular Curva ABC:', err);
+      setError('Erro ao calcular a Curva ABC: ' + err.message);
     } finally {
       setLoading(false);
     }
   };
+
+  const isInsumos = modo === 'insumos';
+  const curvaABC = isInsumos ? curvaInsumos : curvaComposicoes;
+  const resumo = isInsumos ? resumoInsumos : resumoComposicoes;
+  const rotuloItem = isInsumos ? 'insumos' : 'composições';
+  const rotuloItemSingular = isInsumos ? 'Insumo' : 'Composição';
 
   const getCategoriaColor = (categoria) => {
     switch (categoria) {
@@ -253,63 +223,61 @@ const CurvaABC = () => {
   };
 
   const exportarPDF = () => {
-    // Importação dinâmica para evitar problemas de SSR
+    if (!resumo) return;
     import('jspdf').then(({ default: jsPDF }) => {
       import('jspdf-autotable').then(({ default: autoTable }) => {
-        const doc = new jsPDF();
-        
-        // Título
-        doc.setFontSize(20);
-        doc.text(`Curva ABC - ${orcamentoNome}`, 14, 22);
-        
-        // Data de geração
-        doc.setFontSize(12);
-        doc.text(`Gerado em: ${new Date().toLocaleDateString('pt-BR')}`, 14, 32);
-        
-        // Resumo
-        doc.setFontSize(14);
-        doc.text('Resumo por Categoria:', 14, 45);
-        
-        doc.setFontSize(10);
-        doc.text(`Categoria A: ${resumo.categoriaA.quantidade} insumos - ${formatCurrency(resumo.categoriaA.valor)} (${resumo.categoriaA.percentual}%)`, 14, 55);
-        doc.text(`Categoria B: ${resumo.categoriaB.quantidade} insumos - ${formatCurrency(resumo.categoriaB.valor)} (${resumo.categoriaB.percentual}%)`, 14, 62);
-        doc.text(`Categoria C: ${resumo.categoriaC.quantidade} insumos - ${formatCurrency(resumo.categoriaC.valor)} (${resumo.categoriaC.percentual}%)`, 14, 69);
-        doc.text(`Total: ${resumo.totalInsumos} insumos - ${formatCurrency(resumo.valorTotal)}`, 14, 76);
-        
-        // Tabela de insumos
+        const docPdf = new jsPDF();
+        const tituloModo = isInsumos ? 'Insumos' : 'Composições';
+
+        docPdf.setFontSize(18);
+        docPdf.text(`Curva ABC (${tituloModo}) - ${orcamentoNome}`, 14, 22);
+        docPdf.setFontSize(11);
+        docPdf.text(`Gerado em: ${new Date().toLocaleDateString('pt-BR')}`, 14, 32);
+
+        docPdf.setFontSize(13);
+        docPdf.text('Resumo por Categoria:', 14, 45);
+        docPdf.setFontSize(10);
+        docPdf.text(`Categoria A: ${resumo.categoriaA.quantidade} ${rotuloItem} - ${formatCurrency(resumo.categoriaA.valor)} (${resumo.categoriaA.percentual}%)`, 14, 55);
+        docPdf.text(`Categoria B: ${resumo.categoriaB.quantidade} ${rotuloItem} - ${formatCurrency(resumo.categoriaB.valor)} (${resumo.categoriaB.percentual}%)`, 14, 62);
+        docPdf.text(`Categoria C: ${resumo.categoriaC.quantidade} ${rotuloItem} - ${formatCurrency(resumo.categoriaC.valor)} (${resumo.categoriaC.percentual}%)`, 14, 69);
+        docPdf.text(`Total: ${resumo.totalItens} ${rotuloItem} - ${formatCurrency(resumo.valorTotal)}`, 14, 76);
+
         const tableData = curvaABC.map((item, index) => [
           index + 1,
           item.nome,
-          item.categoria,
-          item.quantidade.toFixed(2),
-          formatCurrency(item.precoUnitario),
+          isInsumos ? (item.categoria || '—') : (item.unidade || '—'),
+          (item.quantidade || 0).toLocaleString('pt-BR', { maximumFractionDigits: 4 }),
+          formatCurrency(item.precoUnitario || 0),
           formatCurrency(item.valorTotal),
           `${item.percentualValor}%`,
           `${item.percentualAcumulado}%`,
           item.categoriaABC
         ]);
-        
-        autoTable(doc, {
-          head: [['#', 'Insumo', 'Categoria', 'Quantidade', 'Preço Unit.', 'Valor Total', '% Total', '% Acumulado', 'ABC']],
+
+        autoTable(docPdf, {
+          head: [[
+            '#',
+            rotuloItemSingular,
+            isInsumos ? 'Categoria' : 'Unidade',
+            'Quantidade',
+            'Preço Unit.',
+            'Valor Total',
+            '% Total',
+            '% Acumulado',
+            'ABC'
+          ]],
           body: tableData,
           startY: 85,
-          styles: {
-            fontSize: 8,
-            cellPadding: 2
-          },
-          headStyles: {
-            fillColor: [66, 139, 202],
-            textColor: 255
-          }
+          styles: { fontSize: 8, cellPadding: 2 },
+          headStyles: { fillColor: [23, 50, 77], textColor: 255 }
         });
-        
-        // Salvar PDF
-        doc.save(`CurvaABC_${orcamentoNome}_${new Date().toISOString().split('T')[0]}.pdf`);
+
+        docPdf.save(
+          `CurvaABC_${tituloModo}_${(orcamentoNome || 'orcamento').replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`
+        );
       });
     });
   };
-
-
 
   if (loading) {
     return (
@@ -327,22 +295,32 @@ const CurvaABC = () => {
       <Alert variant="danger">
         <FaExclamationTriangle className="me-2" />
         {error}
+        <div className="mt-3">
+          <Button variant="outline-secondary" onClick={() => navigate(`/orcamentos/${orcamentoId}/eap`)}>
+            <FaArrowLeft className="me-2" />
+            Voltar para EAP
+          </Button>
+        </div>
       </Alert>
     );
+  }
+
+  if (!resumo) {
+    return null;
   }
 
   return (
     <div>
       <Card className="mb-4">
         <Card.Header>
-          <div className="d-flex justify-content-between align-items-center">
+          <div className="d-flex justify-content-between align-items-center flex-wrap gap-2">
             <h4 className="mb-0">
               <FaChartBar className="me-2" />
-              Curva ABC - {orcamentoNome}
+              Curva ABC — {orcamentoNome}
             </h4>
-            <div className="d-flex gap-2">
-              <Button 
-                variant="outline-danger" 
+            <div className="d-flex gap-2 flex-wrap">
+              <Button
+                variant="outline-danger"
                 onClick={exportarPDF}
                 disabled={curvaABC.length === 0}
                 title="Exportar para PDF"
@@ -350,8 +328,8 @@ const CurvaABC = () => {
                 <FaFilePdf className="me-2" />
                 Exportar PDF
               </Button>
-              <Button 
-                variant="outline-secondary" 
+              <Button
+                variant="outline-secondary"
                 onClick={() => navigate(`/orcamentos/${orcamentoId}/eap`)}
               >
                 <FaArrowLeft className="me-2" />
@@ -361,11 +339,48 @@ const CurvaABC = () => {
           </div>
         </Card.Header>
         <Card.Body>
+          {/* Toggle Insumos / Composições */}
+          <div className="d-flex justify-content-center mb-4">
+            <div
+              className="abc-toggle d-flex align-items-center gap-3 px-3 py-2 border rounded"
+              style={{ background: 'var(--color-surface, #fff)' }}
+            >
+              <span
+                className={`d-flex align-items-center gap-1 ${isInsumos ? 'fw-semibold text-primary' : 'text-muted'}`}
+                style={{ fontSize: 14, cursor: 'pointer' }}
+                onClick={() => setModo('insumos')}
+              >
+                <FaBoxes />
+                Insumos
+              </span>
+              <Form.Check
+                type="switch"
+                id="abc-modo-switch"
+                checked={!isInsumos}
+                onChange={(e) => setModo(e.target.checked ? 'composicoes' : 'insumos')}
+                aria-label="Alternar entre insumos e composições"
+                className="mb-0"
+              />
+              <span
+                className={`d-flex align-items-center gap-1 ${!isInsumos ? 'fw-semibold text-primary' : 'text-muted'}`}
+                style={{ fontSize: 14, cursor: 'pointer' }}
+                onClick={() => setModo('composicoes')}
+              >
+                <FaLayerGroup />
+                Composições
+              </span>
+            </div>
+          </div>
+
+          <p className="text-center text-muted small mb-4">
+            Analisando Curva ABC de <strong>{isInsumos ? 'insumos' : 'composições'}</strong> deste orçamento
+          </p>
+
           <div className="row mb-4">
             <div className="col-md-3">
               <div className="text-center p-3 border rounded">
                 <h5 className="text-danger">Categoria A</h5>
-                <h6>{resumo.categoriaA.quantidade} insumos</h6>
+                <h6>{resumo.categoriaA.quantidade} {rotuloItem}</h6>
                 <strong>{formatCurrency(resumo.categoriaA.valor)}</strong>
                 <div className="text-muted">{resumo.categoriaA.percentual}% do total</div>
               </div>
@@ -373,7 +388,7 @@ const CurvaABC = () => {
             <div className="col-md-3">
               <div className="text-center p-3 border rounded">
                 <h5 className="text-warning">Categoria B</h5>
-                <h6>{resumo.categoriaB.quantidade} insumos</h6>
+                <h6>{resumo.categoriaB.quantidade} {rotuloItem}</h6>
                 <strong>{formatCurrency(resumo.categoriaB.valor)}</strong>
                 <div className="text-muted">{resumo.categoriaB.percentual}% do total</div>
               </div>
@@ -381,7 +396,7 @@ const CurvaABC = () => {
             <div className="col-md-3">
               <div className="text-center p-3 border rounded">
                 <h5 className="text-success">Categoria C</h5>
-                <h6>{resumo.categoriaC.quantidade} insumos</h6>
+                <h6>{resumo.categoriaC.quantidade} {rotuloItem}</h6>
                 <strong>{formatCurrency(resumo.categoriaC.valor)}</strong>
                 <div className="text-muted">{resumo.categoriaC.percentual}% do total</div>
               </div>
@@ -389,21 +404,19 @@ const CurvaABC = () => {
             <div className="col-md-3">
               <div className="text-center p-3 border rounded">
                 <h5 className="text-primary">Total</h5>
-                <h6>{resumo.totalInsumos} insumos</h6>
+                <h6>{resumo.totalItens} {rotuloItem}</h6>
                 <strong>{formatCurrency(resumo.valorTotal)}</strong>
                 <div className="text-muted">100%</div>
               </div>
             </div>
           </div>
 
-
-
           <Table striped bordered hover responsive>
             <thead>
               <tr>
                 <th>#</th>
-                <th>Insumo</th>
-                <th>Categoria</th>
+                <th>{rotuloItemSingular}</th>
+                <th>{isInsumos ? 'Categoria' : 'Unidade'}</th>
                 <th>Quantidade</th>
                 <th>Preço Unit.</th>
                 <th>Valor Total</th>
@@ -413,26 +426,34 @@ const CurvaABC = () => {
               </tr>
             </thead>
             <tbody>
-              {curvaABC && curvaABC.length > 0 ? (
+              {curvaABC.length > 0 ? (
                 curvaABC.map((item, index) => (
-                  <tr key={item.insumoId}>
+                  <tr key={item.id || index}>
                     <td>{index + 1}</td>
                     <td>
                       <strong>{item.nome}</strong>
-                      <div className="text-muted small">{item.categoria}</div>
+                      {isInsumos && item.unidade && (
+                        <div className="text-muted small">{item.unidade}</div>
+                      )}
                     </td>
                     <td>
-                      <Badge bg="secondary">{item.unidade}</Badge>
+                      {isInsumos ? (
+                        <Badge bg="secondary">{item.categoria || '—'}</Badge>
+                      ) : (
+                        <Badge bg="secondary">{item.unidade || '—'}</Badge>
+                      )}
                     </td>
-                    <td>{item.quantidade.toFixed(2)}</td>
-                    <td>{formatCurrency(item.precoUnitario)}</td>
+                    <td style={{ fontVariantNumeric: 'tabular-nums' }}>
+                      {(item.quantidade || 0).toLocaleString('pt-BR', { maximumFractionDigits: 4 })}
+                    </td>
+                    <td>{formatCurrency(item.precoUnitario || 0)}</td>
                     <td>
                       <strong>{formatCurrency(item.valorTotal)}</strong>
                     </td>
                     <td>{item.percentualValor}%</td>
                     <td>{item.percentualAcumulado}%</td>
                     <td className="text-center">
-                      <Badge bg={getCategoriaColor(item.categoriaABC)}>
+                      <Badge bg={getCategoriaColor(item.categoriaABC)} className="me-1">
                         {item.categoriaABC}
                       </Badge>
                       {getCategoriaIcon(item.categoriaABC)}
@@ -442,7 +463,7 @@ const CurvaABC = () => {
               ) : (
                 <tr>
                   <td colSpan="9" className="text-center text-muted">
-                    Nenhum insumo encontrado para exibir
+                    Nenhum{isInsumos ? ' insumo' : 'a composição'} encontrado{isInsumos ? '' : 'a'} para exibir
                   </td>
                 </tr>
               )}
@@ -452,9 +473,16 @@ const CurvaABC = () => {
           <Alert variant="info" className="mt-3">
             <h6>Como interpretar a Curva ABC:</h6>
             <ul className="mb-0">
-              <li><strong>Categoria A (Vermelho):</strong> Insumos críticos que representam 80% do valor total - controle rigoroso necessário</li>
-              <li><strong>Categoria B (Amarelo):</strong> Insumos importantes que representam 15% do valor total - controle regular</li>
-              <li><strong>Categoria C (Verde):</strong> Insumos de baixo valor que representam 5% do valor total - controle simplificado</li>
+              <li>
+                <strong>Categoria A:</strong> {isInsumos ? 'Insumos' : 'Composições'} críticos que
+                concentram ~80% do valor acumulado — controle rigoroso
+              </li>
+              <li>
+                <strong>Categoria B:</strong> itens intermediários (~15% do valor) — controle regular
+              </li>
+              <li>
+                <strong>Categoria C:</strong> itens de menor impacto (~5% do valor) — controle simplificado
+              </li>
             </ul>
           </Alert>
         </Card.Body>

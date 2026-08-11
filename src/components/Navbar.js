@@ -24,7 +24,7 @@ function NavigationBar() {
   }
 
   return (
-    <Navbar bg="dark" variant="dark" expand="lg" className="mb-3">
+    <Navbar expand="lg" className="mb-3 app-navbar" variant="dark">
       <Container>
         <Navbar.Brand as={Link} to="/" className="d-flex align-items-center">
           <FaCalculator className="me-2" />

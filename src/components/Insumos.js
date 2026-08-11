@@ -9,7 +9,10 @@ import {
   Row, 
   Col,
   Badge,
-  InputGroup
+  InputGroup,
+  Tabs,
+  Tab,
+  Spinner
 } from 'react-bootstrap';
 import { 
   collection, 
@@ -38,7 +41,7 @@ import {
 
 import { db } from '../firebase/config';
 import { useAuth } from '../contexts/AuthContext';
-import { FaPlus, FaEdit, FaTrash, FaSearch, FaBoxes } from 'react-icons/fa';
+import { FaPlus, FaEdit, FaTrash, FaSearch, FaBoxes, FaDatabase, FaSort, FaSortUp, FaSortDown, FaTimes, FaCheck } from 'react-icons/fa';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend);
 
@@ -53,6 +56,19 @@ function Insumos() {
   const [showHistorico, setShowHistorico] = useState(false);
   const [historicoData, setHistoricoData] = useState({ insumo: null, precos: [] });
   const [composicoes, setComposicoes] = useState([]);
+  const [activeTab, setActiveTab] = useState('meus');
+  const [seinfraCatalog, setSeinfraCatalog] = useState([]);
+  const [seinfraLoading, setSeinfraLoading] = useState(false);
+  const [seinfraSearch, setSeinfraSearch] = useState('');
+  const [seinfraError, setSeinfraError] = useState('');
+  const [addingCodigo, setAddingCodigo] = useState(null);
+  const [successMessage, setSuccessMessage] = useState('');
+  const [showSeinfraModal, setShowSeinfraModal] = useState(false);
+  const [seinfraItem, setSeinfraItem] = useState(null);
+  const [seinfraCategoria, setSeinfraCategoria] = useState('Material');
+  const [sortConfig, setSortConfig] = useState({ key: null, direction: null });
+  const [deleteMode, setDeleteMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState([]);
 
   const formatDateBR = (dateStr) => {
     if (!dateStr) return '-';
@@ -72,11 +88,11 @@ function Insumos() {
   };
   
   const [formData, setFormData] = useState({
+    codigo: '',
     nome: '',
     unidade: '',
     precoUnitario: '',
     categoria: '',
-    data: new Date().toISOString().split('T')[0],
     empresa: ''
   });
 
@@ -156,6 +172,116 @@ function Insumos() {
     }
   };
 
+  const loadSeinfraCatalog = async () => {
+    if (seinfraCatalog.length > 0 || seinfraLoading) return;
+    setSeinfraLoading(true);
+    setSeinfraError('');
+    try {
+      const response = await fetch('/insumos/seinfra.json');
+      if (!response.ok) throw new Error('Não foi possível carregar o catálogo SEINFRA');
+      const data = await response.json();
+      setSeinfraCatalog(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error(err);
+      setSeinfraError(err.message || 'Erro ao carregar catálogo SEINFRA');
+    } finally {
+      setSeinfraLoading(false);
+    }
+  };
+
+  const handleTabSelect = (key) => {
+    setActiveTab(key);
+    setSuccessMessage('');
+    setError('');
+    setDeleteMode(false);
+    setSelectedIds([]);
+    if (key === 'seinfra') {
+      loadSeinfraCatalog();
+    }
+  };
+
+  const abrirAdicionarSeinfra = (item) => {
+    const jaExiste = insumos.some(
+      (insumo) =>
+        (insumo.codigo || '').toString().toLowerCase() === item.codigo.toLowerCase() ||
+        (insumo.nome || '').toLowerCase() === item.nome.toLowerCase()
+    );
+    if (jaExiste) {
+      setError(`O insumo "${item.codigo} - ${item.nome}" já está nos seus insumos.`);
+      setSuccessMessage('');
+      return;
+    }
+    setSeinfraItem(item);
+    setSeinfraCategoria('Material');
+    setShowSeinfraModal(true);
+    setError('');
+  };
+
+  const confirmarAdicionarSeinfra = async () => {
+    if (!seinfraItem || !currentUser) return;
+    setAddingCodigo(seinfraItem.codigo);
+    setLoading(true);
+    setError('');
+    setSuccessMessage('');
+
+    try {
+      const hojeStr = new Date().toISOString().split('T')[0];
+      const agora = new Date();
+      const insumoData = {
+        codigo: seinfraItem.codigo,
+        nome: seinfraItem.nome,
+        categoria: seinfraCategoria,
+        unidade: seinfraItem.unidade,
+        precoUnitario: parseFloat(seinfraItem.precoUnitario) || 0,
+        data: hojeStr,
+        empresa: 'SEINFRA',
+        fonte: 'SEINFRA',
+        userId: currentUser.uid,
+        createdAt: agora,
+        updatedAt: agora
+      };
+
+      const docRef = await addDoc(collection(db, 'insumos'), insumoData);
+      await addDoc(collection(db, 'insumos', docRef.id, 'precos'), {
+        preco: insumoData.precoUnitario,
+        data: hojeStr,
+        empresa: 'SEINFRA',
+        createdAt: agora
+      });
+
+      setShowSeinfraModal(false);
+      setSeinfraItem(null);
+      setSuccessMessage(`Insumo "${insumoData.codigo}" adicionado aos seus insumos.`);
+      await fetchInsumos();
+    } catch (err) {
+      console.error(err);
+      setError(`Erro ao adicionar insumo SEINFRA: ${err.message}`);
+    } finally {
+      setLoading(false);
+      setAddingCodigo(null);
+    }
+  };
+
+  const filteredSeinfra = (() => {
+    const termo = seinfraSearch.trim().toLowerCase();
+    if (!termo) return [];
+    const matches = [];
+    for (let i = 0; i < seinfraCatalog.length; i++) {
+      const item = seinfraCatalog[i];
+      if (
+        item.codigo.toLowerCase().includes(termo) ||
+        item.nome.toLowerCase().includes(termo)
+      ) {
+        matches.push(item);
+        if (matches.length >= 80) break;
+      }
+    }
+    return matches;
+  })();
+
+  const jaAdicionado = (codigo) =>
+    insumos.some((insumo) => (insumo.codigo || '').toString().toLowerCase() === String(codigo).toLowerCase());
+
   // Função para atualizar composições que usam um insumo específico
   const atualizarComposicoesComInsumo = async (insumoId, novoPreco) => {
     try {
@@ -234,15 +360,20 @@ function Insumos() {
         return;
       }
 
+      const hojeStr = new Date().toISOString().split('T')[0];
+      const agora = new Date();
+
       const insumoData = {
+        codigo: (formData.codigo || '').trim(),
         nome: formData.nome.trim(),
         categoria: formData.categoria,
         unidade: formData.unidade,
         precoUnitario: parseFloat(formData.precoUnitario),
-        data: formData.data,
+        data: hojeStr,
         empresa: formData.empresa,
         userId: currentUser.uid,
-        createdAt: editingInsumo ? editingInsumo.createdAt : new Date()
+        createdAt: editingInsumo ? editingInsumo.createdAt : agora,
+        updatedAt: agora
       };
 
       if (editingInsumo) {
@@ -253,9 +384,9 @@ function Insumos() {
         if (formData.precoUnitario !== editingInsumo.precoUnitario) {
           const novoPreco = {
             preco: parseFloat(formData.precoUnitario),
-            data: formData.data,
+            data: hojeStr,
             empresa: formData.empresa,
-            createdAt: new Date()
+            createdAt: agora
           };
           
           await addDoc(collection(db, 'insumos', editingInsumo.id, 'precos'), novoPreco);
@@ -273,9 +404,9 @@ function Insumos() {
         // Salvar primeiro preço no histórico
         const primeiroPreco = {
           preco: parseFloat(formData.precoUnitario),
-          data: formData.data,
+          data: hojeStr,
           empresa: formData.empresa,
-          createdAt: new Date()
+          createdAt: agora
         };
         
         await addDoc(collection(db, 'insumos', docRef.id, 'precos'), primeiroPreco);
@@ -297,81 +428,71 @@ function Insumos() {
   const handleEdit = (insumo) => {
     setEditingInsumo(insumo);
     setFormData({
+      codigo: insumo.codigo || '',
       nome: insumo.nome,
       unidade: insumo.unidade,
       precoUnitario: insumo.precoUnitario.toString(),
       categoria: insumo.categoria,
-      data: insumo.data || new Date().toISOString().split('T')[0],
       empresa: insumo.empresa || ''
     });
     setShowModal(true);
   };
 
-  // Função para atualizar composições que usam um insumo deletado
-  const atualizarComposicoesSemInsumo = async (insumoId) => {
+  // Função para atualizar composições removendo um ou mais insumos
+  const atualizarComposicoesSemInsumos = async (insumoIds) => {
     try {
+      const idsSet = new Set(insumoIds);
       const batch = writeBatch(db);
       let composicoesAtualizadas = 0;
-      
-      // Usar o estado local de composições
-      composicoes.forEach(composicao => {
-        // Verificar se a composição usa o insumo deletado
+      const insumosRestantes = insumos.filter((i) => !idsSet.has(i.id));
+
+      composicoes.forEach((composicao) => {
         if (composicao.insumos && Array.isArray(composicao.insumos)) {
-          const insumoUsado = composicao.insumos.find(item => item.insumoId === insumoId);
-          
-          if (insumoUsado) {
-            // Remover o insumo deletado da composição
-            const novosInsumos = composicao.insumos.filter(item => item.insumoId !== insumoId);
-            
-            // Recalcular o valor total da composição
+          const usavaAlgum = composicao.insumos.some((item) => idsSet.has(item.insumoId));
+          if (!usavaAlgum) return;
+
+          const novosInsumos = composicao.insumos.filter((item) => !idsSet.has(item.insumoId));
+          let novoValorTotal = 0;
+          novosInsumos.forEach((item) => {
+            const insumo = insumosRestantes.find((i) => i.id === item.insumoId);
+            if (insumo) {
+              novoValorTotal += (parseFloat(item.quantidade) || 0) * (insumo.precoUnitario || 0);
+            }
+          });
+
+          batch.update(doc(db, 'composicoes', composicao.id), {
+            insumos: novosInsumos,
+            insumoIds: novosInsumos.map((i) => i.insumoId),
+            valorTotal: novoValorTotal
+          });
+          composicoesAtualizadas++;
+        }
+      });
+
+      if (composicoesAtualizadas > 0) {
+        await batch.commit();
+        setComposicoes((prev) =>
+          prev.map((comp) => {
+            if (!comp.insumos || !Array.isArray(comp.insumos)) return comp;
+            const usavaAlgum = comp.insumos.some((item) => idsSet.has(item.insumoId));
+            if (!usavaAlgum) return comp;
+            const novosInsumos = comp.insumos.filter((item) => !idsSet.has(item.insumoId));
             let novoValorTotal = 0;
-            novosInsumos.forEach(item => {
-              const insumo = insumos.find(i => i.id === item.insumoId);
+            novosInsumos.forEach((item) => {
+              const insumo = insumosRestantes.find((i) => i.id === item.insumoId);
               if (insumo) {
                 novoValorTotal += (parseFloat(item.quantidade) || 0) * (insumo.precoUnitario || 0);
               }
             });
-            
-            // Atualizar a composição
-            batch.update(doc(db, 'composicoes', composicao.id), {
+            return {
+              ...comp,
               insumos: novosInsumos,
+              insumoIds: novosInsumos.map((i) => i.insumoId),
               valorTotal: novoValorTotal
-            });
-            
-            composicoesAtualizadas++;
-          }
-        }
-      });
-      
-      // Executar as atualizações em lote
-      if (composicoesAtualizadas > 0) {
-        await batch.commit();
-        console.log(`${composicoesAtualizadas} composições foram atualizadas após a deleção do insumo`);
-        
-        // Atualizar o estado local das composições
-        setComposicoes(prev => prev.map(comp => {
-          if (comp.insumos && Array.isArray(comp.insumos)) {
-            const insumoUsado = comp.insumos.find(item => item.insumoId === insumoId);
-            if (insumoUsado) {
-              const novosInsumos = comp.insumos.filter(item => item.insumoId !== insumoId);
-              let novoValorTotal = 0;
-              novosInsumos.forEach(item => {
-                const insumo = insumos.find(i => i.id === item.insumoId);
-                if (insumo) {
-                  novoValorTotal += (parseFloat(item.quantidade) || 0) * (insumo.precoUnitario || 0);
-                }
-              });
-              return {
-                ...comp,
-                insumos: novosInsumos,
-                valorTotal: novoValorTotal
-              };
-            }
-          }
-          return comp;
-        }));
+            };
+          })
+        );
       }
-      
     } catch (error) {
       console.error('Erro ao atualizar composições após deleção do insumo:', error);
     }
@@ -380,35 +501,32 @@ function Insumos() {
   // Função para atualizar orçamentos que usam composições modificadas
   const atualizarOrcamentosComComposicoes = async () => {
     try {
-      // Buscar todos os orçamentos do usuário
       const orcamentosRef = collection(db, 'orcamentos');
       const orcamentosSnapshot = await getDocs(orcamentosRef);
-      
+
       const batch = writeBatch(db);
       let orcamentosAtualizados = 0;
-      
-      orcamentosSnapshot.docs.forEach(docSnap => {
+
+      orcamentosSnapshot.docs.forEach((docSnap) => {
         const orcamento = docSnap.data();
-        
-        // Verificar se o orçamento tem composições
+        if (orcamento.userId !== currentUser.uid) return;
+
         if (orcamento.composicoes && Array.isArray(orcamento.composicoes)) {
           let valorTotalAtualizado = 0;
           let composicoesModificadas = false;
-          
-          // Recalcular o valor total do orçamento baseado nas composições atualizadas
-          orcamento.composicoes.forEach(composicao => {
+
+          orcamento.composicoes.forEach((composicao) => {
             if (composicao.composicaoId) {
-              // Buscar a composição atualizada no estado local
-              const composicaoAtualizada = composicoes.find(c => c.id === composicao.composicaoId);
+              const composicaoAtualizada = composicoes.find((c) => c.id === composicao.composicaoId);
               if (composicaoAtualizada) {
-                const valorComposicao = (composicaoAtualizada.valorTotal || 0) * (parseFloat(composicao.quantidade) || 1);
+                const valorComposicao =
+                  (composicaoAtualizada.valorTotal || 0) * (parseFloat(composicao.quantidade) || 1);
                 valorTotalAtualizado += valorComposicao;
                 composicoesModificadas = true;
               }
             }
           });
-          
-          // Atualizar o orçamento se necessário
+
           if (composicoesModificadas) {
             batch.update(doc(db, 'orcamentos', docSnap.id), {
               valorTotal: valorTotalAtualizado,
@@ -418,77 +536,191 @@ function Insumos() {
           }
         }
       });
-      
-      // Executar as atualizações em lote
+
       if (orcamentosAtualizados > 0) {
         await batch.commit();
-        console.log(`${orcamentosAtualizados} orçamentos foram atualizados após a deleção do insumo`);
       }
-      
     } catch (error) {
       console.error('Erro ao atualizar orçamentos após deleção do insumo:', error);
     }
   };
 
-  const handleDelete = async (id) => {
-    if (window.confirm('Tem certeza que deseja excluir este insumo? Esta ação irá:\n\n• Remover o insumo de todas as composições que o utilizam\n• Recalcular os valores das composições afetadas\n• Atualizar os orçamentos que usam essas composições\n\nEsta ação não pode ser desfeita.')) {
-      try {
-        setLoading(true);
-        setError('');
-        
-        // Primeiro, atualizar todas as composições que usam este insumo
-        await atualizarComposicoesSemInsumo(id);
-        
-        // Depois, atualizar os orçamentos que usam essas composições
-        await atualizarOrcamentosComComposicoes();
-        
-        // Deletar a subcoleção de preços primeiro
+  const entrarModoExclusao = () => {
+    setDeleteMode(true);
+    setSelectedIds([]);
+    setError('');
+    setSuccessMessage('');
+  };
+
+  const cancelarModoExclusao = () => {
+    setDeleteMode(false);
+    setSelectedIds([]);
+  };
+
+  const toggleSelectId = (id) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const toggleSelectAllVisible = () => {
+    const visibleIds = sortedInsumos.map((i) => i.id);
+    const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id));
+    if (allSelected) {
+      setSelectedIds((prev) => prev.filter((id) => !visibleIds.includes(id)));
+    } else {
+      setSelectedIds((prev) => [...new Set([...prev, ...visibleIds])]);
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.length === 0) {
+      setError('Selecione ao menos um insumo para excluir.');
+      return;
+    }
+
+    const ok = window.confirm(
+      `Tem certeza que deseja excluir ${selectedIds.length} insumo(s)?\n\n` +
+        'Esta ação irá:\n' +
+        '• Remover os insumos de todas as composições que os utilizam\n' +
+        '• Recalcular os valores das composições afetadas\n' +
+        '• Atualizar os orçamentos que usam essas composições\n\n' +
+        'Esta ação não pode ser desfeita.'
+    );
+    if (!ok) return;
+
+    try {
+      setLoading(true);
+      setError('');
+
+      await atualizarComposicoesSemInsumos(selectedIds);
+      await atualizarOrcamentosComComposicoes();
+
+      for (const id of selectedIds) {
         const precosRef = collection(db, 'insumos', id, 'precos');
         const precosSnapshot = await getDocs(precosRef);
-        
-        // Deletar todos os documentos de preços
-        const deletePromises = precosSnapshot.docs.map(doc => deleteDoc(doc.ref));
-        await Promise.all(deletePromises);
-        
-        // Deletar o insumo principal
+        await Promise.all(precosSnapshot.docs.map((d) => deleteDoc(d.ref)));
         await deleteDoc(doc(db, 'insumos', id));
-        
-        // Atualizar a lista local
-        setInsumos(prev => prev.filter(insumo => insumo.id !== id));
-        
-        // Limpar o insumo selecionado se for o mesmo que foi deletado
-        if (editingInsumo && editingInsumo.id === id) {
-          setEditingInsumo(null);
-        }
-        
-        // Recarregar as composições para refletir as mudanças
-        await fetchComposicoes();
-        
-        setError('');
-        alert('Insumo deletado com sucesso! Todas as composições e orçamentos foram atualizados automaticamente.');
-      } catch (error) {
-        setError('Erro ao excluir insumo');
-        console.error('Erro ao excluir insumo:', error);
-      } finally {
-        setLoading(false);
       }
+
+      setInsumos((prev) => prev.filter((insumo) => !selectedIds.includes(insumo.id)));
+      if (editingInsumo && selectedIds.includes(editingInsumo.id)) {
+        setEditingInsumo(null);
+      }
+
+      await fetchComposicoes();
+      setSuccessMessage(`${selectedIds.length} insumo(s) excluído(s) com sucesso.`);
+      cancelarModoExclusao();
+    } catch (error) {
+      setError('Erro ao excluir insumos');
+      console.error('Erro ao excluir insumos:', error);
+    } finally {
+      setLoading(false);
     }
   };
 
   const resetForm = () => {
     setFormData({
+      codigo: '',
       nome: '',
       unidade: '',
       precoUnitario: '',
       categoria: '',
-      data: new Date().toISOString().split('T')[0],
       empresa: ''
     });
   };
 
-  const filteredInsumos = insumos.filter(insumo =>
-    (insumo.nome || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (insumo.categoria || '').toLowerCase().includes(searchTerm.toLowerCase())
+  const getDataInsumoISO = (insumo) => {
+    // Preferir updatedAt (última atualização), depois data (string) e por fim createdAt
+    const fonte = insumo.updatedAt || insumo.createdAt;
+
+    if (fonte) {
+      if (typeof fonte.toDate === 'function') {
+        // Timestamp do Firestore
+        return fonte.toDate().toISOString().split('T')[0];
+      }
+      if (fonte instanceof Date) {
+        return fonte.toISOString().split('T')[0];
+      }
+    }
+
+    if (insumo.data) {
+      return insumo.data;
+    }
+
+    return null;
+  };
+
+  const filteredInsumos = insumos.filter(insumo => {
+    const termo = searchTerm.toLowerCase();
+    return (
+      (insumo.codigo || '').toString().toLowerCase().includes(termo) ||
+      (insumo.nome || '').toLowerCase().includes(termo) ||
+      (insumo.categoria || '').toLowerCase().includes(termo)
+    );
+  });
+
+  const toggleSort = (key) => {
+    setSortConfig((prev) => {
+      if (prev.key !== key) return { key, direction: 'asc' };
+      if (prev.direction === 'asc') return { key, direction: 'desc' };
+      return { key: null, direction: null };
+    });
+  };
+
+  const getSortValue = (insumo, key) => {
+    switch (key) {
+      case 'codigo':
+        return (insumo.codigo || '').toString().toLowerCase();
+      case 'nome':
+        return (insumo.nome || '').toLowerCase();
+      case 'categoria':
+        return (insumo.categoria || '').toLowerCase();
+      case 'unidade':
+        return (insumo.unidade || '').toLowerCase();
+      case 'precoUnitario':
+        return Number(insumo.precoUnitario) || 0;
+      case 'empresa':
+        return (insumo.empresa || '').toLowerCase();
+      case 'data':
+        return getDataInsumoISO(insumo) || '';
+      default:
+        return '';
+    }
+  };
+
+  const sortedInsumos = (() => {
+    if (!sortConfig.key || !sortConfig.direction) return filteredInsumos;
+    const list = [...filteredInsumos];
+    list.sort((a, b) => {
+      const va = getSortValue(a, sortConfig.key);
+      const vb = getSortValue(b, sortConfig.key);
+      let cmp = 0;
+      if (typeof va === 'number' && typeof vb === 'number') {
+        cmp = va - vb;
+      } else {
+        cmp = String(va).localeCompare(String(vb), 'pt-BR', { numeric: true, sensitivity: 'base' });
+      }
+      return sortConfig.direction === 'asc' ? cmp : -cmp;
+    });
+    return list;
+  })();
+
+  const renderSortIcon = (key) => {
+    if (sortConfig.key !== key) return <FaSort className="ms-1 text-muted" size={12} />;
+    if (sortConfig.direction === 'asc') return <FaSortUp className="ms-1" size={12} />;
+    return <FaSortDown className="ms-1" size={12} />;
+  };
+
+  const SortableTh = ({ columnKey, children }) => (
+    <th
+      onClick={() => toggleSort(columnKey)}
+      style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
+      title="Clique para ordenar"
+    >
+      {children}
+      {renderSortIcon(columnKey)}
+    </th>
   );
 
   const getCategoriaColor = (categoria) => {
@@ -508,97 +740,252 @@ function Insumos() {
           <h1><FaBoxes className="me-2" />Insumos</h1>
           <p className="text-muted">Gerencie os insumos básicos para suas composições</p>
         </div>
-        <Button onClick={() => setShowModal(true)} variant="primary">
-          <FaPlus className="me-2" />
-          Novo Insumo
-        </Button>
+        {activeTab === 'meus' && (
+          <div className="d-flex gap-2">
+            {deleteMode ? (
+              <>
+                <Button variant="outline-secondary" onClick={cancelarModoExclusao} disabled={loading}>
+                  <FaTimes className="me-2" />
+                  Cancelar
+                </Button>
+                <Button
+                  variant="danger"
+                  onClick={handleBulkDelete}
+                  disabled={loading || selectedIds.length === 0}
+                >
+                  <FaCheck className="me-2" />
+                  {loading ? 'Excluindo...' : `Confirmar exclusão (${selectedIds.length})`}
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="outline-danger" onClick={entrarModoExclusao}>
+                  <FaTrash className="me-2" />
+                  Excluir
+                </Button>
+                <Button onClick={() => setShowModal(true)} variant="primary">
+                  <FaPlus className="me-2" />
+                  Novo Insumo
+                </Button>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
-      {error && <Alert variant="danger">{error}</Alert>}
+      {error && <Alert variant="danger" onClose={() => setError('')} dismissible>{error}</Alert>}
+      {successMessage && <Alert variant="success" onClose={() => setSuccessMessage('')} dismissible>{successMessage}</Alert>}
 
-      <Card>
-        <Card.Header>
-          <Row className="align-items-center">
-            <Col>
-              <h5 className="mb-0">Lista de Insumos</h5>
-            </Col>
-            <Col md={4}>
-              <InputGroup>
-                <InputGroup.Text>
-                  <FaSearch />
-                </InputGroup.Text>
-                <Form.Control
-                  type="text"
-                  placeholder="Buscar insumos..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                />
-              </InputGroup>
-            </Col>
-          </Row>
-        </Card.Header>
-        <Card.Body>
-          {filteredInsumos.length === 0 ? (
-            <div className="text-center py-4">
-              <FaBoxes size={48} className="text-muted mb-3" />
-              <p className="text-muted">Nenhum insumo encontrado</p>
-              <Button onClick={() => setShowModal(true)} variant="outline-primary">
-                Adicionar Primeiro Insumo
-              </Button>
-            </div>
-          ) : (
-            <Table responsive hover>
-              <thead>
-                <tr>
-                  <th>Nome</th>
-                  <th>Categoria</th>
-                  <th>Unidade</th>
-                  <th>Preço Unitário</th>
-                  <th>Empresa</th>
-                  <th>Data</th>
-                  <th>Ações</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredInsumos.map((insumo) => (
-                  <tr key={insumo.id} onClick={() => abrirHistorico(insumo)} style={{cursor: 'pointer'}}>
-                    <td><strong>{insumo.nome}</strong></td>
-                    <td>
-                      <Badge bg={getCategoriaColor(insumo.categoria)}>
-                        {insumo.categoria}
-                      </Badge>
-                    </td>
-                    <td>{insumo.unidade}</td>
-                    <td>R$ {insumo.precoUnitario.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
-                    <td>{insumo.empresa || '-'}</td>
-                    <td>{formatDateBR(insumo.data)}</td>
-                    <td>
-                      <Button
-                        size="sm"
-                        variant="outline-primary"
-                        className="me-2"
-                        onClick={(e) => { e.stopPropagation(); handleEdit(insumo); }}
+      <Tabs activeKey={activeTab} onSelect={handleTabSelect} className="mb-3">
+        <Tab eventKey="meus" title="Meus Insumos">
+          <Card>
+            <Card.Header>
+              <Row className="align-items-center">
+                <Col>
+                  <h5 className="mb-0">Lista de Insumos</h5>
+                  {deleteMode && (
+                    <small className="text-danger">Selecione os insumos que deseja excluir</small>
+                  )}
+                </Col>
+                <Col md={4}>
+                  <InputGroup>
+                    <InputGroup.Text>
+                      <FaSearch />
+                    </InputGroup.Text>
+                    <Form.Control
+                      type="text"
+                      placeholder="Buscar insumos..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                    />
+                  </InputGroup>
+                </Col>
+              </Row>
+            </Card.Header>
+            <Card.Body>
+              {filteredInsumos.length === 0 ? (
+                <div className="text-center py-4">
+                  <FaBoxes size={48} className="text-muted mb-3" />
+                  <p className="text-muted">Nenhum insumo encontrado</p>
+                  <Button onClick={() => setShowModal(true)} variant="outline-primary">
+                    Adicionar Primeiro Insumo
+                  </Button>
+                </div>
+              ) : (
+                <Table responsive hover>
+                  <thead>
+                    <tr>
+                      {deleteMode && (
+                        <th style={{ width: 40 }}>
+                          <Form.Check
+                            type="checkbox"
+                            checked={
+                              sortedInsumos.length > 0 &&
+                              sortedInsumos.every((i) => selectedIds.includes(i.id))
+                            }
+                            onChange={toggleSelectAllVisible}
+                            title="Selecionar todos visíveis"
+                          />
+                        </th>
+                      )}
+                      <SortableTh columnKey="codigo">Código</SortableTh>
+                      <SortableTh columnKey="nome">Nome</SortableTh>
+                      <SortableTh columnKey="categoria">Categoria</SortableTh>
+                      <SortableTh columnKey="unidade">Unidade</SortableTh>
+                      <SortableTh columnKey="precoUnitario">Preço Unitário</SortableTh>
+                      <SortableTh columnKey="empresa">Empresa</SortableTh>
+                      <SortableTh columnKey="data">Data</SortableTh>
+                      {!deleteMode && <th>Ações</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedInsumos.map((insumo) => (
+                      <tr
+                        key={insumo.id}
+                        onClick={() => {
+                          if (deleteMode) toggleSelectId(insumo.id);
+                          else abrirHistorico(insumo);
+                        }}
+                        style={{ cursor: 'pointer' }}
+                        className={selectedIds.includes(insumo.id) ? 'table-danger' : ''}
                       >
-                        <FaEdit />
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline-danger"
-                        onClick={(e) => { e.stopPropagation(); handleDelete(insumo.id); }}
-                      >
-                        <FaTrash />
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </Table>
-          )}
-        </Card.Body>
-      </Card>
+                        {deleteMode && (
+                          <td onClick={(e) => e.stopPropagation()}>
+                            <Form.Check
+                              type="checkbox"
+                              checked={selectedIds.includes(insumo.id)}
+                              onChange={() => toggleSelectId(insumo.id)}
+                            />
+                          </td>
+                        )}
+                        <td>{insumo.codigo || '-'}</td>
+                        <td><strong>{insumo.nome}</strong></td>
+                        <td>
+                          <Badge bg={getCategoriaColor(insumo.categoria)}>
+                            {insumo.categoria}
+                          </Badge>
+                        </td>
+                        <td>{insumo.unidade}</td>
+                        <td>R$ {insumo.precoUnitario.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                        <td>{insumo.empresa || '-'}</td>
+                        <td>{formatDateBR(getDataInsumoISO(insumo))}</td>
+                        {!deleteMode && (
+                          <td>
+                            <Button
+                              size="sm"
+                              variant="outline-primary"
+                              onClick={(e) => { e.stopPropagation(); handleEdit(insumo); }}
+                            >
+                              <FaEdit />
+                            </Button>
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </Table>
+              )}
+            </Card.Body>
+          </Card>
+        </Tab>
+
+        <Tab eventKey="seinfra" title={<span><FaDatabase className="me-1" />Catálogo SEINFRA</span>}>
+          <Card>
+            <Card.Header>
+              <Row className="align-items-center">
+                <Col>
+                  <h5 className="mb-0">Tabela SEINFRA</h5>
+                  <small className="text-muted">
+                    Busque e adicione insumos da tabela oficial aos seus insumos
+                    {seinfraCatalog.length > 0 ? ` (${seinfraCatalog.length.toLocaleString('pt-BR')} itens)` : ''}
+                  </small>
+                </Col>
+                <Col md={5}>
+                  <InputGroup>
+                    <InputGroup.Text>
+                      <FaSearch />
+                    </InputGroup.Text>
+                    <Form.Control
+                      type="text"
+                      placeholder="Buscar por código ou descrição..."
+                      value={seinfraSearch}
+                      onChange={(e) => setSeinfraSearch(e.target.value)}
+                    />
+                  </InputGroup>
+                </Col>
+              </Row>
+            </Card.Header>
+            <Card.Body>
+              {seinfraError && <Alert variant="danger">{seinfraError}</Alert>}
+              {seinfraLoading ? (
+                <div className="text-center py-5">
+                  <Spinner animation="border" />
+                  <p className="text-muted mt-3 mb-0">Carregando catálogo SEINFRA...</p>
+                </div>
+              ) : !seinfraSearch.trim() ? (
+                <div className="text-center py-4">
+                  <FaDatabase size={48} className="text-muted mb-3" />
+                  <p className="text-muted mb-0">Digite um código ou parte da descrição para buscar no catálogo.</p>
+                </div>
+              ) : filteredSeinfra.length === 0 ? (
+                <div className="text-center py-4">
+                  <p className="text-muted mb-0">Nenhum item encontrado para &quot;{seinfraSearch}&quot;</p>
+                </div>
+              ) : (
+                <>
+                  <p className="text-muted small mb-2">
+                    Mostrando até 80 resultados. Refine a busca se necessário.
+                  </p>
+                  <Table responsive hover>
+                    <thead>
+                      <tr>
+                        <th>Código</th>
+                        <th>Descrição</th>
+                        <th>Unidade</th>
+                        <th>Valor (R$)</th>
+                        <th>Ação</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredSeinfra.map((item) => {
+                        const adicionado = jaAdicionado(item.codigo);
+                        return (
+                          <tr key={item.codigo}>
+                            <td>{item.codigo}</td>
+                            <td><strong>{item.nome}</strong></td>
+                            <td>{item.unidade}</td>
+                            <td>
+                              R$ {(item.precoUnitario || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            </td>
+                            <td>
+                              {adicionado ? (
+                                <Badge bg="success">Já adicionado</Badge>
+                              ) : (
+                                <Button
+                                  size="sm"
+                                  variant="outline-primary"
+                                  disabled={addingCodigo === item.codigo || loading}
+                                  onClick={() => abrirAdicionarSeinfra(item)}
+                                >
+                                  <FaPlus className="me-1" />
+                                  Adicionar
+                                </Button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </Table>
+                </>
+              )}
+            </Card.Body>
+          </Card>
+        </Tab>
+      </Tabs>
 
       {/* Modal para Adicionar/Editar Insumo */}
-      <Modal show={showModal} onHide={() => {
+      <Modal show={showModal} size="lg" onHide={() => {
         setShowModal(false);
         setEditingInsumo(null);
         resetForm();
@@ -610,8 +997,20 @@ function Insumos() {
         </Modal.Header>
         <Form onSubmit={handleSubmit}>
           <Modal.Body>
+            {/* Linha 1: Código + Nome (ordem do CRUD) */}
             <Row>
-              <Col md={6}>
+              <Col md={3}>
+                <Form.Group className="mb-3">
+                  <Form.Label>Código *</Form.Label>
+                  <Form.Control
+                    type="text"
+                    value={formData.codigo}
+                    onChange={(e) => setFormData({ ...formData, codigo: e.target.value })}
+                    required
+                  />
+                </Form.Group>
+              </Col>
+              <Col md={9}>
                 <Form.Group className="mb-3">
                   <Form.Label>Nome *</Form.Label>
                   <Form.Control
@@ -622,7 +1021,11 @@ function Insumos() {
                   />
                 </Form.Group>
               </Col>
-              <Col md={6}>
+            </Row>
+
+            {/* Linha 2: Categoria, Unidade, Preço Unitário */}
+            <Row>
+              <Col md={4}>
                 <Form.Group className="mb-3">
                   <Form.Label>Categoria *</Form.Label>
                   <Form.Select
@@ -637,10 +1040,7 @@ function Insumos() {
                   </Form.Select>
                 </Form.Group>
               </Col>
-            </Row>
-            
-            <Row>
-              <Col md={6}>
+              <Col md={4}>
                 <Form.Group className="mb-3">
                   <Form.Label>Unidade *</Form.Label>
                   <Form.Select
@@ -655,7 +1055,7 @@ function Insumos() {
                   </Form.Select>
                 </Form.Group>
               </Col>
-              <Col md={6}>
+              <Col md={4}>
                 <Form.Group className="mb-3">
                   <Form.Label>Preço Unitário (R$) *</Form.Label>
                   <Form.Control
@@ -670,25 +1070,15 @@ function Insumos() {
               </Col>
             </Row>
 
+            {/* Linha 3: Empresa */}
             <Row>
-              <Col md={6}>
+              <Col md={12}>
                 <Form.Group className="mb-3">
                   <Form.Label>Empresa</Form.Label>
                   <Form.Control
                     type="text"
                     value={formData.empresa}
                     onChange={(e) => setFormData({ ...formData, empresa: e.target.value })}
-                  />
-                </Form.Group>
-              </Col>
-              <Col md={6}>
-                <Form.Group className="mb-3">
-                  <Form.Label>Data *</Form.Label>
-                  <Form.Control
-                    type="date"
-                    value={formData.data}
-                    onChange={(e) => setFormData({ ...formData, data: e.target.value })}
-                    required
                   />
                 </Form.Group>
               </Col>
@@ -707,6 +1097,46 @@ function Insumos() {
             </Button>
           </Modal.Footer>
         </Form>
+      </Modal>
+
+      {/* Modal: categoria ao adicionar do SEINFRA */}
+      <Modal show={showSeinfraModal} onHide={() => { setShowSeinfraModal(false); setSeinfraItem(null); }}>
+        <Modal.Header closeButton>
+          <Modal.Title>Adicionar insumo SEINFRA</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          {seinfraItem && (
+            <>
+              <p className="mb-2"><strong>Código:</strong> {seinfraItem.codigo}</p>
+              <p className="mb-2"><strong>Descrição:</strong> {seinfraItem.nome}</p>
+              <p className="mb-2"><strong>Unidade:</strong> {seinfraItem.unidade}</p>
+              <p className="mb-3">
+                <strong>Preço:</strong>{' '}
+                R$ {(seinfraItem.precoUnitario || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              </p>
+              <Form.Group>
+                <Form.Label>Categoria *</Form.Label>
+                <Form.Select
+                  value={seinfraCategoria}
+                  onChange={(e) => setSeinfraCategoria(e.target.value)}
+                >
+                  {categorias.map(cat => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                </Form.Select>
+              </Form.Group>
+              <p className="text-muted small mt-3 mb-0">A empresa será registrada como SEINFRA.</p>
+            </>
+          )}
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={() => { setShowSeinfraModal(false); setSeinfraItem(null); }}>
+            Cancelar
+          </Button>
+          <Button variant="primary" disabled={loading || !seinfraCategoria} onClick={confirmarAdicionarSeinfra}>
+            {loading ? 'Adicionando...' : 'Adicionar aos meus insumos'}
+          </Button>
+        </Modal.Footer>
       </Modal>
 
       {/* Modal Histórico de Preços */}
