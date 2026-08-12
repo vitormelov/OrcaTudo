@@ -27,6 +27,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { FaPlus, FaEdit, FaTrash, FaSearch, FaFileInvoiceDollar, FaEye, FaCopy, FaSort, FaSortUp, FaSortDown, FaCodeBranch, FaArchive, FaList } from 'react-icons/fa';
 import { useNavigate } from 'react-router-dom';
 import { copiarEAPCompleta, formatRevisao, getObraId, getRevisao } from '../utils/eapCopy';
+import { formatCurrency } from '../utils/formatters';
 
 function Orcamentos() {
   const { currentUser } = useAuth();
@@ -410,6 +411,8 @@ function Orcamentos() {
         return epochFromValue(orcamento.data);
       case 'ultimaAtualizacao':
         return epochFromValue(orcamento.ultimaAtualizacaoEAP);
+      case 'valorBase':
+        return orcamento.valorTotal || 0;
       case 'valorTotal':
         return calcularValorTotalComBDI(orcamento);
       case 'status':
@@ -454,25 +457,6 @@ function Orcamentos() {
       {renderSortIcon(columnKey)}
     </th>
   );
-
-  // Função para formatar o valor com informações do BDI
-  const formatarValorComBDI = (orcamento) => {
-    if (!orcamento.valorTotal || orcamento.valorTotal === 0) return 'R$ 0,00';
-    
-    const valorComBDI = calcularValorTotalComBDI(orcamento);
-    
-    if (!orcamento.bdiConfig) {
-      return `R$ ${orcamento.valorTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
-    }
-    
-    const bdiPercentual = ((1 + orcamento.bdiConfig.lucro/100) * (1 + orcamento.bdiConfig.tributos/100) * (1 + orcamento.bdiConfig.financeiro/100) * (1 + orcamento.bdiConfig.garantias/100) - 1) * 100;
-    
-    return {
-      valorComBDI: valorComBDI,
-      valorBase: orcamento.valorTotal,
-      bdiPercentual: bdiPercentual
-    };
-  };
 
   return (
     <div>
@@ -584,7 +568,8 @@ function Orcamentos() {
                   <SortableTh columnKey="cliente">Cliente</SortableTh>
                   <SortableTh columnKey="data">Data</SortableTh>
                   <SortableTh columnKey="ultimaAtualizacao">Última atualização</SortableTh>
-                  <SortableTh columnKey="valorTotal">Valor Total (c/ BDI)</SortableTh>
+                  <SortableTh columnKey="valorBase">Valor s/ BDI</SortableTh>
+                  <SortableTh columnKey="valorTotal">Valor c/ BDI</SortableTh>
                   <SortableTh columnKey="status">Status</SortableTh>
                   <th>Ações</th>
                 </tr>
@@ -606,40 +591,11 @@ function Orcamentos() {
                     <td>{orcamento.cliente}</td>
                     <td>{formatarData(orcamento.data)}</td>
                     <td>{formatarUltimaAtualizacao(orcamento.ultimaAtualizacaoEAP)}</td>
-                    <td>
-                      {(() => {
-                        const valorFormatado = formatarValorComBDI(orcamento);
-                        const cats = orcamento.totaisPorCategoria;
-                        return (
-                          <div>
-                            {typeof valorFormatado === 'string' ? (
-                              <div className="fw-bold">{valorFormatado}</div>
-                            ) : (
-                              <>
-                                <div className="fw-bold text-success">
-                                  R$ {valorFormatado.valorComBDI.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                                </div>
-                                <small className="text-muted">
-                                  Base: R$ {valorFormatado.valorBase.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                                </small>
-                                <br />
-                                <small className="text-success">
-                                  <span className="badge bg-success me-1">BDI</span>
-                                  +{valorFormatado.bdiPercentual.toFixed(1)}%
-                                </small>
-                              </>
-                            )}
-                            {cats && (
-                              <div className="small text-muted mt-1" style={{ fontVariantNumeric: 'tabular-nums', lineHeight: 1.4 }}>
-                                <div>Mat: R$ {(cats.Material || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
-                                <div>MO: R$ {(cats['Mão de Obra'] || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
-                                <div>Eq: R$ {(cats.Equipamento || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
-                                <div>Serv: R$ {(cats.Serviço || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })()}
+                    <td className="fw-semibold" style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                      {formatCurrency(orcamento.valorTotal || 0)}
+                    </td>
+                    <td className="fw-bold" style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                      {formatCurrency(calcularValorTotalComBDI(orcamento))}
                     </td>
                     <td>
                       <Badge bg={getStatusColor(orcamento.status)}>

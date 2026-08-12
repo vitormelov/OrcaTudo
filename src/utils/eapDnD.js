@@ -248,31 +248,115 @@ export function handleEapDragEnd(orcamento, event) {
   if (!over || !active || !orcamento) return orcamento;
 
   const activeId = String(active.id);
-  let overId = String(over.id);
+  const overId = String(over.id);
+  if (activeId === overId) return orcamento;
+
   const activeParsed = parseDragId(activeId);
   if (!activeParsed) return orcamento;
+
+  const fromContainer = findContainerOfDragId(orcamento, activeId);
+  if (!fromContainer) return orcamento;
 
   let toContainer =
     overId === ROOT_CONTAINER || overId.endsWith(':children')
       ? overId
       : findContainerOfDragId(orcamento, overId);
-  if (!toContainer) return orcamento;
 
-  const fromContainer = findContainerOfDragId(orcamento, activeId);
-  if (!fromContainer) return orcamento;
-  if (!containerAccepts(toContainer, activeParsed.tipo)) return orcamento;
+  // Se o alvo direto não aceita o tipo, sobe para um container compatível
+  if (!toContainer || !containerAccepts(toContainer, activeParsed.tipo)) {
+    toContainer = findCompatibleContainer(orcamento, overId, activeParsed.tipo);
+  }
+  if (!toContainer || !containerAccepts(toContainer, activeParsed.tipo)) return orcamento;
 
   if (fromContainer === toContainer) {
     const items = getContainerItems(orcamento, fromContainer);
     const oldIndex = items.indexOf(activeId);
-    const newIndex = items.indexOf(overId);
     if (oldIndex < 0) return orcamento;
-    const moved = newIndex < 0 ? items : arrayMove(items, oldIndex, newIndex);
-    return applyOrderFromList(orcamento, moved);
+
+    let newIndex = items.indexOf(overId);
+    if (newIndex < 0) {
+      // over pode ser um descendente: usa o item irmão no mesmo container
+      newIndex = items.findIndex((id) => id !== activeId && itemContainsDragId(orcamento, id, overId));
+    }
+    if (newIndex < 0) {
+      // soltou na área droppable do próprio container → mantém / vai para o fim
+      if (overId === toContainer) newIndex = items.length - 1;
+      else return orcamento;
+    }
+    if (oldIndex === newIndex) return orcamento;
+    return applyOrderFromList(orcamento, arrayMove(items, oldIndex, newIndex));
   }
 
   const destItems = getContainerItems(orcamento, toContainer).filter((id) => id !== activeId);
   let toIndex = destItems.indexOf(overId);
+  if (toIndex < 0) {
+    toIndex = destItems.findIndex((id) => itemContainsDragId(orcamento, id, overId));
+  }
   if (toIndex < 0) toIndex = destItems.length;
   return moveItemToContainer(orcamento, activeId, toContainer, toIndex);
+}
+
+function parentContainerId(orcamento, containerId) {
+  if (!containerId || containerId === ROOT_CONTAINER) return null;
+  if (containerId.startsWith('subgrupo:') && containerId.endsWith(':children')) {
+    const subId = containerId.split(':')[1];
+    const loc = findSubgrupoLoc(orcamento.pacotes, subId);
+    return loc ? grupoContainer(loc.grupo.id) : null;
+  }
+  if (containerId.startsWith('grupo:') && containerId.endsWith(':children')) {
+    const grupoId = containerId.split(':')[1];
+    const loc = findGrupoLoc(orcamento.pacotes, grupoId);
+    return loc ? pacoteContainer(loc.pacote.id) : null;
+  }
+  if (containerId.startsWith('pacote:') && containerId.endsWith(':children')) {
+    return ROOT_CONTAINER;
+  }
+  return null;
+}
+
+function findCompatibleContainer(orcamento, overId, tipo) {
+  let container =
+    overId === ROOT_CONTAINER || overId.endsWith(':children')
+      ? overId
+      : findContainerOfDragId(orcamento, overId);
+
+  while (container) {
+    if (containerAccepts(container, tipo)) return container;
+    container = parentContainerId(orcamento, container);
+  }
+  return null;
+}
+
+/** Verifica se dragId (ex.: pacote) contém o overId em sua subárvore imediata/profunda */
+function itemContainsDragId(orcamento, itemDragId, overId) {
+  if (itemDragId === overId) return true;
+  const parsed = parseDragId(itemDragId);
+  if (!parsed) return false;
+
+  if (parsed.tipo === 'pacote') {
+    const p = (orcamento.pacotes || []).find((x) => x.uid === parsed.id || x.id === parsed.id);
+    if (!p) return false;
+    const childContainer = pacoteContainer(p.id);
+    if (overId === childContainer) return true;
+    return getContainerItems(orcamento, childContainer).some((id) =>
+      itemContainsDragId(orcamento, id, overId)
+    );
+  }
+  if (parsed.tipo === 'grupo') {
+    const loc = findByDragKey(orcamento, itemDragId);
+    if (!loc) return false;
+    const childContainer = grupoContainer(loc.entity.id);
+    if (overId === childContainer) return true;
+    return getContainerItems(orcamento, childContainer).some((id) =>
+      itemContainsDragId(orcamento, id, overId)
+    );
+  }
+  if (parsed.tipo === 'subgrupo') {
+    const loc = findByDragKey(orcamento, itemDragId);
+    if (!loc) return false;
+    const childContainer = subgrupoContainer(loc.entity.id);
+    if (overId === childContainer) return true;
+    return getContainerItems(orcamento, childContainer).some((id) => id === overId);
+  }
+  return false;
 }

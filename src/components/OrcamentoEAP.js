@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Modal, Form, Alert, InputGroup, Button } from 'react-bootstrap';
 import { formatCurrency } from '../utils/formatters';
 import { jsPDF } from 'jspdf';
@@ -33,6 +33,19 @@ const getStatusColor = (status) => ({
   'Em Execução': 'info', Concluído: 'primary'
 }[status] || 'secondary');
 
+const MENSAGEM_SAIR_SEM_SALVAR =
+  'Você tem alterações não salvas na EAP.\n\nSe sair agora, essas alterações serão perdidas. Deseja sair mesmo assim?';
+
+function snapshotEditavel(orcamento, bdiConfig) {
+  if (!orcamento) return '';
+  const { pacotes, composicoes } = stripUidsForSave(orcamento);
+  return JSON.stringify({
+    pacotes,
+    composicoes,
+    bdiConfig: orcamento.bdiConfig ? bdiConfig : null
+  });
+}
+
 function OrcamentoEAP() {
   const { currentUser } = useAuth();
   const { id: orcamentoId } = useParams();
@@ -46,6 +59,7 @@ function OrcamentoEAP() {
   const [success, setSuccess] = useState('');
   const [abertos, setAbertos] = useState({});
   const [activeDragId, setActiveDragId] = useState(null);
+  const snapshotSalvoRef = useRef('');
 
   const [showModalNo, setShowModalNo] = useState(false);
   const [modalNoTipo, setModalNoTipo] = useState('pacote');
@@ -79,8 +93,12 @@ function OrcamentoEAP() {
       if (!Number.isFinite(Number(data.revisao))) data.revisao = 0;
       if (data.revisaoTravada == null) data.revisaoTravada = false;
       const migrado = migrarEapAntigo(data);
+      const bdiInicial = data.bdiConfig
+        ? { ...data.bdiConfig }
+        : { lucro: 10, tributos: 8, financeiro: 2, garantias: 1 };
       setOrcamento(migrado);
-      if (data.bdiConfig) setBdiConfig(data.bdiConfig);
+      setBdiConfig(bdiInicial);
+      snapshotSalvoRef.current = snapshotEditavel(migrado, data.bdiConfig ? bdiInicial : null);
       const abertosInit = {};
       (migrado.pacotes || []).forEach((p) => {
         abertosInit[p.id] = true;
@@ -105,6 +123,32 @@ function OrcamentoEAP() {
   const toggleAberto = (id) => setAbertos((prev) => ({ ...prev, [id]: !prev[id] }));
 
   const somenteLeitura = Boolean(orcamento?.revisaoTravada);
+
+  const temAlteracoesNaoSalvas = useMemo(() => {
+    if (!orcamento || orcamento.revisaoTravada) return false;
+    const atual = snapshotEditavel(orcamento, orcamento.bdiConfig ? bdiConfig : null);
+    return atual !== snapshotSalvoRef.current;
+  }, [orcamento, bdiConfig]);
+
+  const confirmarSaida = useCallback(() => {
+    if (!temAlteracoesNaoSalvas) return true;
+    return window.confirm(MENSAGEM_SAIR_SEM_SALVAR);
+  }, [temAlteracoesNaoSalvas]);
+
+  const sairDaEap = useCallback((destino) => {
+    if (!confirmarSaida()) return;
+    navigate(destino);
+  }, [confirmarSaida, navigate]);
+
+  useEffect(() => {
+    const onBeforeUnload = (e) => {
+      if (!temAlteracoesNaoSalvas) return;
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [temAlteracoesNaoSalvas]);
 
   const valorTotal = calcularValorTotal(orcamento?.composicoes);
   const calcularBDI = () => {
@@ -337,6 +381,7 @@ function OrcamentoEAP() {
               ? {
                   ...c,
                   composicaoId: catalogo.id,
+                  codigo: catalogo.codigo || '',
                   nome: catalogo.nome,
                   unidade: catalogo.unidade,
                   quantidade,
@@ -352,6 +397,7 @@ function OrcamentoEAP() {
       const nova = {
         uid: newId('comp'),
         composicaoId: catalogo.id,
+        codigo: catalogo.codigo || '',
         nome: catalogo.nome,
         unidade: catalogo.unidade,
         quantidade,
@@ -401,7 +447,12 @@ function OrcamentoEAP() {
         revisaoTravada: false
       };
       await updateDoc(doc(db, 'orcamentos', orcamentoId), payload);
-      setOrcamento((prev) => migrarEapAntigo({ ...prev, ...payload }));
+      const atualizado = migrarEapAntigo({ ...orcamento, ...payload });
+      setOrcamento(atualizado);
+      snapshotSalvoRef.current = snapshotEditavel(
+        atualizado,
+        atualizado.bdiConfig ? bdiConfig : null
+      );
       setSuccess('EAP salva com sucesso!');
     } catch (e) {
       console.error(e);
@@ -412,6 +463,12 @@ function OrcamentoEAP() {
 
   const handleNovaRevisao = async () => {
     if (!orcamento || somenteLeitura) return;
+    if (temAlteracoesNaoSalvas) {
+      const seguir = window.confirm(
+        'Há alterações não salvas. Ao criar a nova revisão, o estado atual será salvo antes de travar.\n\nDeseja continuar?'
+      );
+      if (!seguir) return;
+    }
     const ok = window.confirm(
       `Criar nova revisão a partir da Rev. ${formatRevisao(getRevisao(orcamento))}?\n\n` +
         'A revisão atual será travada e uma nova revisão editável será criada.'
@@ -530,11 +587,10 @@ function OrcamentoEAP() {
       docPdf.text(`Cliente: ${orcamento.cliente || ''}`, margin, 70);
       docPdf.text(`Total: ${formatCurrency(valorTotal)}`, margin, 80);
       if (orcamento.bdiConfig) docPdf.text(`Total c/ BDI: ${formatCurrency(valorComBDI)}`, margin, 90);
+      const totME = (totaisPorCategoria.Material || 0) + (totaisPorCategoria.Equipamento || 0);
+      const totMOS = (totaisPorCategoria['Mão de Obra'] || 0) + (totaisPorCategoria.Serviço || 0);
       docPdf.text(
-        `Material: ${formatCurrency(totaisPorCategoria.Material)}  |  ` +
-        `Mão de Obra: ${formatCurrency(totaisPorCategoria['Mão de Obra'])}  |  ` +
-        `Equipamento: ${formatCurrency(totaisPorCategoria.Equipamento)}  |  ` +
-        `Serviço: ${formatCurrency(totaisPorCategoria.Serviço)}`,
+        `Mat+Eq: ${formatCurrency(totME)}  |  MO+Serv: ${formatCurrency(totMOS)}`,
         margin,
         orcamento.bdiConfig ? 100 : 90
       );
@@ -543,21 +599,31 @@ function OrcamentoEAP() {
       iterarComposicoesExport((p, g, s, c) => {
         const caminho = [p.nome, g?.nome, s?.nome].filter(Boolean).join(' > ');
         const sub = calcularSubvalores(c);
+        const q = parseFloat(c.quantidade) || 1;
+        const me = (sub.Material || 0) + (sub.Equipamento || 0);
+        const mos = (sub['Mão de Obra'] || 0) + (sub.Serviço || 0);
+        const codigo = c.codigo || catalogoComposicoes.find((x) => x.id === c.composicaoId)?.codigo || '';
         const pct = valorTotal > 0 ? ((c.custoTotal / valorTotal) * 100).toFixed(1) : '0.0';
         rows.push([
-          caminho, c.nome, `${c.quantidade} ${c.unidade}`,
-          formatCurrency(sub.Material), formatCurrency(sub['Mão de Obra']),
-          formatCurrency(sub.Equipamento), formatCurrency(sub.Serviço),
-          formatCurrency(c.custoTotal), `${pct}%`
+          codigo,
+          `${caminho} › ${c.nome}`,
+          c.unidade || '',
+          String(c.quantidade ?? ''),
+          formatCurrency(me / q),
+          formatCurrency(mos / q),
+          formatCurrency(me),
+          formatCurrency(mos),
+          formatCurrency(c.custoTotal),
+          `${pct}%`
         ]);
       });
 
       autoTable(docPdf, {
-        head: [['Caminho', 'Composição', 'Qtd', 'Material', 'Mão de Obra', 'Equipamento', 'Serviço', 'Total', '%']],
+        head: [['Código', 'Descrição', 'Un.', 'Qtd', 'CU Mat+Eq', 'CU MO+Serv', 'Tot Mat+Eq', 'Tot MO+Serv', 'Total', '%']],
         body: rows,
         startY: orcamento.bdiConfig ? 110 : 100,
-        styles: { fontSize: 7 },
-        headStyles: { fillColor: [41, 128, 185] }
+        styles: { fontSize: 6 },
+        headStyles: { fillColor: [23, 50, 77] }
       });
       docPdf.save(`EAP_${(orcamento.nome || 'orcamento').replace(/[^a-zA-Z0-9]/g, '_')}.pdf`);
     } catch (e) {
@@ -575,20 +641,24 @@ function OrcamentoEAP() {
       data.push(['Obra:', orcamento.nome || '']);
       data.push(['Valor Total:', valorTotal]);
       if (orcamento.bdiConfig) data.push(['Valor c/ BDI:', valorComBDI]);
-      data.push(['Material:', totaisPorCategoria.Material]);
-      data.push(['Mão de Obra:', totaisPorCategoria['Mão de Obra']]);
-      data.push(['Equipamento:', totaisPorCategoria.Equipamento]);
-      data.push(['Serviço:', totaisPorCategoria.Serviço]);
+      data.push(['Mat+Eq:', (totaisPorCategoria.Material || 0) + (totaisPorCategoria.Equipamento || 0)]);
+      data.push(['MO+Serv:', (totaisPorCategoria['Mão de Obra'] || 0) + (totaisPorCategoria.Serviço || 0)]);
       data.push([]);
-      data.push(['Caminho', 'Composição', 'Quantidade', 'Unidade', 'Material', 'Mão de Obra', 'Equipamento', 'Serviço', 'Total', '%']);
+      data.push([
+        'Código', 'Caminho', 'Descrição', 'Unidade', 'Quantidade',
+        'CU Mat+Eq', 'CU MO+Serv', 'Tot Mat+Eq', 'Tot MO+Serv', 'Total', '%'
+      ]);
       iterarComposicoesExport((p, g, s, c) => {
         const caminho = [p.nome, g?.nome, s?.nome].filter(Boolean).join(' > ');
         const sub = calcularSubvalores(c);
+        const q = parseFloat(c.quantidade) || 1;
+        const me = (sub.Material || 0) + (sub.Equipamento || 0);
+        const mos = (sub['Mão de Obra'] || 0) + (sub.Serviço || 0);
+        const codigo = c.codigo || catalogoComposicoes.find((x) => x.id === c.composicaoId)?.codigo || '';
         const pct = valorTotal > 0 ? ((c.custoTotal / valorTotal) * 100).toFixed(1) : '0.0';
         data.push([
-          caminho, c.nome, c.quantidade, c.unidade,
-          sub.Material, sub['Mão de Obra'], sub.Equipamento, sub.Serviço,
-          c.custoTotal, `${pct}%`
+          codigo, caminho, c.nome, c.unidade, c.quantidade,
+          me / q, mos / q, me, mos, c.custoTotal, `${pct}%`
         ]);
       });
       const wb = XLSX.utils.book_new();
@@ -641,6 +711,7 @@ function OrcamentoEAP() {
         salvarEAP={salvarEAP}
         loading={loading}
         navigate={navigate}
+        sairDaEap={sairDaEap}
         orcamentoId={orcamentoId}
         exportarEAPPdf={exportarEAPPdf}
         exportarEAPExcel={exportarEAPExcel}
@@ -654,6 +725,8 @@ function OrcamentoEAP() {
         formatRevisao={formatRevisao}
         getRevisao={getRevisao}
         onNovaRevisao={handleNovaRevisao}
+        catalogoComposicoes={catalogoComposicoes}
+        insumos={insumos}
       />
 
       <Modal show={showModalNo} onHide={() => setShowModalNo(false)}>
