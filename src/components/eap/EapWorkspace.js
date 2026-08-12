@@ -12,7 +12,7 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-
 import { CSS } from '@dnd-kit/utilities';
 import { restrictToVerticalAxis, snapCenterToCursor } from '@dnd-kit/modifiers';
 import {
-  FaPlus, FaTrash, FaFolder, FaFolderOpen, FaLayerGroup, FaSave, FaEdit,
+  FaPlus, FaTrash, FaSave, FaEdit,
   FaChartBar, FaChartPie, FaFilePdf, FaCalculator, FaFileExcel, FaArrowLeft, FaGripVertical,
   FaChevronDown, FaChevronRight, FaCodeBranch
 } from 'react-icons/fa';
@@ -298,15 +298,12 @@ export default function EapWorkspace(props) {
   const renderNoHeader = ({
     aberto,
     toggleId,
-    icon,
     nome,
-    badge,
-    badgeBg,
-    badgeText,
     bg,
     indent = 0,
     escopo,
-    actions
+    actions,
+    highlightTotal = false
   }) => {
     const total = totalDoNo(orcamento.composicoes, escopo);
     const cats = totaisCategoriaDoNo(orcamento.composicoes, escopo, calcularSubvalores);
@@ -320,9 +317,7 @@ export default function EapWorkspace(props) {
           </Button>
         </div>
         <div className="eap-desc d-flex align-items-center gap-2 flex-wrap">
-          {icon}
           <strong>{nome}</strong>
-          <Badge bg={badgeBg} text={badgeText}>{badge}</Badge>
         </div>
         <div className="eap-col-un" />
         <div className="eap-col-num" />
@@ -330,7 +325,7 @@ export default function EapWorkspace(props) {
         <div className="eap-col-num" />
         <div className="eap-col-num"><MoneyCell value={custos.totME} /></div>
         <div className="eap-col-num"><MoneyCell value={custos.totMOS} /></div>
-        <div className="eap-col-num"><MoneyCell value={total} strong className={badge === 'Pacote' ? 'text-primary' : ''} /></div>
+        <div className="eap-col-num"><MoneyCell value={total} strong className={highlightTotal ? 'text-primary' : ''} /></div>
         <div className="eap-col-num eap-num text-muted">{pctDoTotal(total, valorTotal)}</div>
         <div className="eap-actions">{!somenteLeitura && actions}</div>
       </div>
@@ -349,10 +344,7 @@ export default function EapWorkspace(props) {
         {renderNoHeader({
           aberto,
           toggleId: subgrupo.id,
-          icon: <FaLayerGroup className="text-info" />,
           nome: subgrupo.nome,
-          badge: 'Subgrupo',
-          badgeBg: 'info',
           bg: 'var(--color-background, #f5f7f9)',
           indent: 24,
           escopo,
@@ -406,11 +398,7 @@ export default function EapWorkspace(props) {
         {renderNoHeader({
           aberto,
           toggleId: grupo.id,
-          icon: <FaFolderOpen className="text-warning" />,
           nome: grupo.nome,
-          badge: 'Grupo',
-          badgeBg: 'warning',
-          badgeText: 'dark',
           bg: 'var(--color-background, #f5f7f9)',
           indent: 12,
           escopo,
@@ -465,13 +453,11 @@ export default function EapWorkspace(props) {
         {renderNoHeader({
           aberto,
           toggleId: pacote.id,
-          icon: <FaFolder className="text-primary" />,
           nome: pacote.nome,
-          badge: 'Pacote',
-          badgeBg: 'primary',
           bg: '#e8eef3',
           indent: 0,
           escopo,
+          highlightTotal: true,
           actions: (
             <>
               <Button size="sm" variant="outline-secondary" title="Novo grupo" onClick={() => abrirCriarNo('grupo', { pacoteId: pacote.id })}><FaPlus /></Button>

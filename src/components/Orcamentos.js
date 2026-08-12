@@ -459,29 +459,18 @@ function Orcamentos() {
   );
 
   return (
-    <div>
-      <div className="d-flex justify-content-between align-items-center mb-4">
+    <div className="page-lista">
+      <div className="page-lista-toolbar d-flex justify-content-between align-items-center mb-3">
         <div>
           <h1><FaFileInvoiceDollar className="me-2" />Orçamentos</h1>
-          <p className="text-muted">Crie e gerencie orçamentos para seus projetos</p>
+          <p className="text-muted mb-0">Crie e gerencie orçamentos para seus projetos</p>
         </div>
         <div className="d-flex gap-2">
           {!mostrarObsoletos && (
-            <>
-              <Button onClick={() => setShowModal(true)} variant="primary">
-                <FaPlus className="me-2" />
-                Novo Orçamento
-              </Button>
-              <Button
-                onClick={() => setShowCopyModal(true)}
-                variant="warning"
-                disabled={orcamentosAtuais.length === 0}
-                title={orcamentosAtuais.length === 0 ? 'Não há orçamentos para copiar' : 'Copiar um orçamento existente'}
-              >
-                <FaCopy className="me-2" />
-                Copiar Orçamento
-              </Button>
-            </>
+            <Button onClick={() => setShowModal(true)} variant="primary">
+              <FaPlus className="me-2" />
+              Novo Orçamento
+            </Button>
           )}
           <Button
             variant={mostrarObsoletos ? 'primary' : 'outline-secondary'}
@@ -515,7 +504,7 @@ function Orcamentos() {
         </Alert>
       )}
 
-      <Card>
+      <Card className="lista-card">
         <Card.Header>
           <Row className="align-items-center">
             <Col>
@@ -762,30 +751,6 @@ function Orcamentos() {
         </Modal.Header>
         <Form onSubmit={handleSubmitCopy}>
           <Modal.Body>
-            {/* Seleção do orçamento para copiar */}
-            {!orcamentoParaCopiar && (
-              <Form.Group className="mb-3">
-                <Form.Label>Selecione o orçamento para copiar *</Form.Label>
-                <Form.Select
-                  onChange={(e) => {
-                    const orcamentoSelecionado = orcamentos.find(o => o.id === e.target.value);
-                    if (orcamentoSelecionado) {
-                      handleCopyOrcamento(orcamentoSelecionado);
-                    }
-                  }}
-                  required
-                >
-                  <option value="">Escolha um orçamento...</option>
-                  {orcamentosAtuais.map((orcamento) => (
-                    <option key={orcamento.id} value={orcamento.id}>
-                      {orcamento.nome} — Rev. {formatRevisao(getRevisao(orcamento))} — {orcamento.cliente}
-                    </option>
-                  ))}
-                </Form.Select>
-              </Form.Group>
-            )}
-
-            {/* Formulário de cópia */}
             {orcamentoParaCopiar && (
               <Alert variant="info" className="mb-3">
                 <strong>Copiando:</strong> {orcamentoParaCopiar.nome}

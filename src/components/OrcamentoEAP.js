@@ -1,9 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Modal, Form, Alert, InputGroup, Button } from 'react-bootstrap';
 import { formatCurrency } from '../utils/formatters';
-import { jsPDF } from 'jspdf';
-import autoTable from 'jspdf-autotable';
-import * as XLSX from 'xlsx';
 import { collection, getDocs, updateDoc, doc, query, where, getDoc, addDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useAuth } from '../contexts/AuthContext';
@@ -12,6 +9,8 @@ import {
   migrarEapAntigo, stripUidsForSave, getCompsDoNo, calcularValorTotal, newId
 } from '../utils/eapTree';
 import { copiarEAPCompleta, formatRevisao, getObraId, getRevisao } from '../utils/eapCopy';
+import { exportarEapPlanilhaOrcamento } from '../utils/eapExcelExport';
+import { exportarEapPlanilhaPdf } from '../utils/eapPdfExport';
 import EapWorkspace from './eap/EapWorkspace';
 
 const formatarDataAmigavel = (dataISO) => {
@@ -553,79 +552,33 @@ function OrcamentoEAP() {
     setLoading(false);
   };
 
-  const iterarComposicoesExport = (cb) => {
-    const pacotes = [...(orcamento.pacotes || [])].sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
-    pacotes.forEach((p) => {
-      getCompsDoNo(orcamento.composicoes, { pacoteId: p.id }).forEach((c) => cb(p, null, null, c));
-      [...(p.grupos || [])].sort((a, b) => (a.ordem || 0) - (b.ordem || 0)).forEach((g) => {
-        getCompsDoNo(orcamento.composicoes, { pacoteId: p.id, grupoId: g.id }).forEach((c) => cb(p, g, null, c));
-        [...(g.subgrupos || [])].sort((a, b) => (a.ordem || 0) - (b.ordem || 0)).forEach((s) => {
-          getCompsDoNo(orcamento.composicoes, {
-            pacoteId: p.id, grupoId: g.id, subgrupoId: s.id
-          }).forEach((c) => cb(p, g, s, c));
-        });
-      });
-    });
-  };
-
   const exportarEAPPdf = () => {
     if (!orcamento) return;
     try {
-      const docPdf = new jsPDF();
-      const pageWidth = docPdf.internal.pageSize.width;
-      const margin = 20;
-      docPdf.setFillColor(41, 128, 185);
-      docPdf.rect(0, 0, pageWidth, 45, 'F');
-      docPdf.setTextColor(255, 255, 255);
-      docPdf.setFontSize(16);
-      docPdf.setFont('helvetica', 'bold');
-      docPdf.text('ESTRUTURA ANALÍTICA DO PROJETO (EAP)', pageWidth / 2, 28, { align: 'center' });
-      docPdf.setTextColor(0, 0, 0);
-      docPdf.setFontSize(10);
-      docPdf.setFont('helvetica', 'normal');
-      docPdf.text(`Projeto: ${orcamento.nome || ''}`, margin, 60);
-      docPdf.text(`Cliente: ${orcamento.cliente || ''}`, margin, 70);
-      docPdf.text(`Total: ${formatCurrency(valorTotal)}`, margin, 80);
-      if (orcamento.bdiConfig) docPdf.text(`Total c/ BDI: ${formatCurrency(valorComBDI)}`, margin, 90);
-      const totME = (totaisPorCategoria.Material || 0) + (totaisPorCategoria.Equipamento || 0);
-      const totMOS = (totaisPorCategoria['Mão de Obra'] || 0) + (totaisPorCategoria.Serviço || 0);
-      docPdf.text(
-        `Mat+Eq: ${formatCurrency(totME)}  |  MO+Serv: ${formatCurrency(totMOS)}`,
-        margin,
-        orcamento.bdiConfig ? 100 : 90
-      );
-
-      const rows = [];
-      iterarComposicoesExport((p, g, s, c) => {
-        const caminho = [p.nome, g?.nome, s?.nome].filter(Boolean).join(' > ');
-        const sub = calcularSubvalores(c);
-        const q = parseFloat(c.quantidade) || 1;
-        const me = (sub.Material || 0) + (sub.Equipamento || 0);
-        const mos = (sub['Mão de Obra'] || 0) + (sub.Serviço || 0);
-        const codigo = c.codigo || catalogoComposicoes.find((x) => x.id === c.composicaoId)?.codigo || '';
-        const pct = valorTotal > 0 ? ((c.custoTotal / valorTotal) * 100).toFixed(1) : '0.0';
-        rows.push([
-          codigo,
-          `${caminho} › ${c.nome}`,
-          c.unidade || '',
-          String(c.quantidade ?? ''),
-          formatCurrency(me / q),
-          formatCurrency(mos / q),
-          formatCurrency(me),
-          formatCurrency(mos),
-          formatCurrency(c.custoTotal),
-          `${pct}%`
-        ]);
+      const bdiAbs = orcamento.bdiConfig ? valorComBDI - valorTotal : 0;
+      exportarEapPlanilhaPdf({
+        orcamento: {
+          ...orcamento,
+          composicoes: (orcamento.composicoes || []).map((c) => ({
+            ...c,
+            codigo:
+              c.codigo ||
+              catalogoComposicoes.find((x) => x.id === c.composicaoId)?.codigo ||
+              ''
+          }))
+        },
+        calcularSubvalores,
+        valorTotal,
+        valorComBDI: orcamento.bdiConfig ? valorComBDI : valorTotal,
+        bdiValor: bdiAbs,
+        revisao: formatRevisao(getRevisao(orcamento)),
+        elaboradoPor:
+          currentUser?.displayName ||
+          currentUser?.email ||
+          orcamento.elaboradoPor ||
+          '',
+        status: orcamento.status || ''
       });
-
-      autoTable(docPdf, {
-        head: [['Código', 'Descrição', 'Un.', 'Qtd', 'CU Mat+Eq', 'CU MO+Serv', 'Tot Mat+Eq', 'Tot MO+Serv', 'Total', '%']],
-        body: rows,
-        startY: orcamento.bdiConfig ? 110 : 100,
-        styles: { fontSize: 6 },
-        headStyles: { fillColor: [23, 50, 77] }
-      });
-      docPdf.save(`EAP_${(orcamento.nome || 'orcamento').replace(/[^a-zA-Z0-9]/g, '_')}.pdf`);
     } catch (e) {
       console.error(e);
       alert('Erro ao gerar PDF');
@@ -635,35 +588,30 @@ function OrcamentoEAP() {
   const exportarEAPExcel = () => {
     if (!orcamento) return;
     try {
-      const data = [];
-      data.push(['ESTRUTURA ANALÍTICA DO PROJETO (EAP)']);
-      data.push(['Cliente:', orcamento.cliente || '']);
-      data.push(['Obra:', orcamento.nome || '']);
-      data.push(['Valor Total:', valorTotal]);
-      if (orcamento.bdiConfig) data.push(['Valor c/ BDI:', valorComBDI]);
-      data.push(['Mat+Eq:', (totaisPorCategoria.Material || 0) + (totaisPorCategoria.Equipamento || 0)]);
-      data.push(['MO+Serv:', (totaisPorCategoria['Mão de Obra'] || 0) + (totaisPorCategoria.Serviço || 0)]);
-      data.push([]);
-      data.push([
-        'Código', 'Caminho', 'Descrição', 'Unidade', 'Quantidade',
-        'CU Mat+Eq', 'CU MO+Serv', 'Tot Mat+Eq', 'Tot MO+Serv', 'Total', '%'
-      ]);
-      iterarComposicoesExport((p, g, s, c) => {
-        const caminho = [p.nome, g?.nome, s?.nome].filter(Boolean).join(' > ');
-        const sub = calcularSubvalores(c);
-        const q = parseFloat(c.quantidade) || 1;
-        const me = (sub.Material || 0) + (sub.Equipamento || 0);
-        const mos = (sub['Mão de Obra'] || 0) + (sub.Serviço || 0);
-        const codigo = c.codigo || catalogoComposicoes.find((x) => x.id === c.composicaoId)?.codigo || '';
-        const pct = valorTotal > 0 ? ((c.custoTotal / valorTotal) * 100).toFixed(1) : '0.0';
-        data.push([
-          codigo, caminho, c.nome, c.unidade, c.quantidade,
-          me / q, mos / q, me, mos, c.custoTotal, `${pct}%`
-        ]);
+      const bdiAbs = orcamento.bdiConfig ? valorComBDI - valorTotal : 0;
+      exportarEapPlanilhaOrcamento({
+        orcamento: {
+          ...orcamento,
+          composicoes: (orcamento.composicoes || []).map((c) => ({
+            ...c,
+            codigo:
+              c.codigo ||
+              catalogoComposicoes.find((x) => x.id === c.composicaoId)?.codigo ||
+              ''
+          }))
+        },
+        calcularSubvalores,
+        valorTotal,
+        valorComBDI: orcamento.bdiConfig ? valorComBDI : valorTotal,
+        bdiValor: bdiAbs,
+        revisao: formatRevisao(getRevisao(orcamento)),
+        elaboradoPor:
+          currentUser?.displayName ||
+          currentUser?.email ||
+          orcamento.elaboradoPor ||
+          '',
+        status: orcamento.status || ''
       });
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(data), 'EAP');
-      XLSX.writeFile(wb, `EAP_${(orcamento.nome || 'orcamento').replace(/[^a-zA-Z0-9]/g, '_')}.xlsx`);
     } catch (e) {
       console.error(e);
       alert('Erro ao gerar Excel');

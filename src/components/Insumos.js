@@ -207,7 +207,9 @@ function Insumos() {
         (insumo.nome || '').toLowerCase() === item.nome.toLowerCase()
     );
     if (jaExiste) {
-      setError(`O insumo "${item.codigo} - ${item.nome}" já está nos seus insumos.`);
+      setError(
+        `O insumo "${item.codigo} - ${item.nome}" já está nos seus insumos (mesmo código ou nome).`
+      );
       setSuccessMessage('');
       return;
     }
@@ -225,6 +227,17 @@ function Insumos() {
     setSuccessMessage('');
 
     try {
+      const jaExiste = insumos.some(
+        (insumo) =>
+          (insumo.codigo || '').toString().toLowerCase() === seinfraItem.codigo.toLowerCase() ||
+          (insumo.nome || '').toLowerCase() === seinfraItem.nome.toLowerCase()
+      );
+      if (jaExiste) {
+        throw new Error(
+          `Já existe um insumo com o código "${seinfraItem.codigo}" ou o nome "${seinfraItem.nome}".`
+        );
+      }
+
       const hojeStr = new Date().toISOString().split('T')[0];
       const agora = new Date();
       const insumoData = {
@@ -279,8 +292,15 @@ function Insumos() {
     return matches;
   })();
 
-  const jaAdicionado = (codigo) =>
-    insumos.some((insumo) => (insumo.codigo || '').toString().toLowerCase() === String(codigo).toLowerCase());
+  const jaAdicionado = (codigo, nome) =>
+    insumos.some((insumo) => {
+      const mesmoCodigo =
+        (insumo.codigo || '').toString().toLowerCase() === String(codigo || '').toLowerCase();
+      const mesmoNome =
+        nome &&
+        (insumo.nome || '').toLowerCase() === String(nome).toLowerCase();
+      return mesmoCodigo || mesmoNome;
+    });
 
   // Função para atualizar composições que usam um insumo específico
   const atualizarComposicoesComInsumo = async (insumoId, novoPreco) => {
@@ -347,15 +367,38 @@ function Insumos() {
     setError('');
 
     try {
-      // Verificar se já existe um insumo com o mesmo nome
-      const nomeNormalizado = formData.nome.trim().toLowerCase();
-      const insumoExistente = insumos.find(insumo => 
-        insumo.nome.toLowerCase() === nomeNormalizado && 
-        insumo.id !== editingInsumo?.id
-      );
+      const codigoNormalizado = (formData.codigo || '').trim().toLowerCase();
+      const nomeNormalizado = (formData.nome || '').trim().toLowerCase();
 
-      if (insumoExistente) {
-        setError('Já existe um insumo com este nome. Use um nome diferente.');
+      if (!codigoNormalizado) {
+        setError('O código do insumo é obrigatório.');
+        setLoading(false);
+        return;
+      }
+      if (!nomeNormalizado) {
+        setError('O nome do insumo é obrigatório.');
+        setLoading(false);
+        return;
+      }
+
+      const mesmoCodigo = insumos.find(
+        (insumo) =>
+          (insumo.codigo || '').toString().trim().toLowerCase() === codigoNormalizado &&
+          insumo.id !== editingInsumo?.id
+      );
+      if (mesmoCodigo) {
+        setError(`Já existe um insumo com o código "${mesmoCodigo.codigo}". Use um código diferente.`);
+        setLoading(false);
+        return;
+      }
+
+      const mesmoNome = insumos.find(
+        (insumo) =>
+          (insumo.nome || '').trim().toLowerCase() === nomeNormalizado &&
+          insumo.id !== editingInsumo?.id
+      );
+      if (mesmoNome) {
+        setError(`Já existe um insumo com o nome "${mesmoNome.nome}". Use um nome diferente.`);
         setLoading(false);
         return;
       }
@@ -438,113 +481,6 @@ function Insumos() {
     setShowModal(true);
   };
 
-  // Função para atualizar composições removendo um ou mais insumos
-  const atualizarComposicoesSemInsumos = async (insumoIds) => {
-    try {
-      const idsSet = new Set(insumoIds);
-      const batch = writeBatch(db);
-      let composicoesAtualizadas = 0;
-      const insumosRestantes = insumos.filter((i) => !idsSet.has(i.id));
-
-      composicoes.forEach((composicao) => {
-        if (composicao.insumos && Array.isArray(composicao.insumos)) {
-          const usavaAlgum = composicao.insumos.some((item) => idsSet.has(item.insumoId));
-          if (!usavaAlgum) return;
-
-          const novosInsumos = composicao.insumos.filter((item) => !idsSet.has(item.insumoId));
-          let novoValorTotal = 0;
-          novosInsumos.forEach((item) => {
-            const insumo = insumosRestantes.find((i) => i.id === item.insumoId);
-            if (insumo) {
-              novoValorTotal += (parseFloat(item.quantidade) || 0) * (insumo.precoUnitario || 0);
-            }
-          });
-
-          batch.update(doc(db, 'composicoes', composicao.id), {
-            insumos: novosInsumos,
-            insumoIds: novosInsumos.map((i) => i.insumoId),
-            valorTotal: novoValorTotal
-          });
-          composicoesAtualizadas++;
-        }
-      });
-
-      if (composicoesAtualizadas > 0) {
-        await batch.commit();
-        setComposicoes((prev) =>
-          prev.map((comp) => {
-            if (!comp.insumos || !Array.isArray(comp.insumos)) return comp;
-            const usavaAlgum = comp.insumos.some((item) => idsSet.has(item.insumoId));
-            if (!usavaAlgum) return comp;
-            const novosInsumos = comp.insumos.filter((item) => !idsSet.has(item.insumoId));
-            let novoValorTotal = 0;
-            novosInsumos.forEach((item) => {
-              const insumo = insumosRestantes.find((i) => i.id === item.insumoId);
-              if (insumo) {
-                novoValorTotal += (parseFloat(item.quantidade) || 0) * (insumo.precoUnitario || 0);
-              }
-            });
-            return {
-              ...comp,
-              insumos: novosInsumos,
-              insumoIds: novosInsumos.map((i) => i.insumoId),
-              valorTotal: novoValorTotal
-            };
-          })
-        );
-      }
-    } catch (error) {
-      console.error('Erro ao atualizar composições após deleção do insumo:', error);
-    }
-  };
-
-  // Função para atualizar orçamentos que usam composições modificadas
-  const atualizarOrcamentosComComposicoes = async () => {
-    try {
-      const orcamentosRef = collection(db, 'orcamentos');
-      const orcamentosSnapshot = await getDocs(orcamentosRef);
-
-      const batch = writeBatch(db);
-      let orcamentosAtualizados = 0;
-
-      orcamentosSnapshot.docs.forEach((docSnap) => {
-        const orcamento = docSnap.data();
-        if (orcamento.userId !== currentUser.uid) return;
-
-        if (orcamento.composicoes && Array.isArray(orcamento.composicoes)) {
-          let valorTotalAtualizado = 0;
-          let composicoesModificadas = false;
-
-          orcamento.composicoes.forEach((composicao) => {
-            if (composicao.composicaoId) {
-              const composicaoAtualizada = composicoes.find((c) => c.id === composicao.composicaoId);
-              if (composicaoAtualizada) {
-                const valorComposicao =
-                  (composicaoAtualizada.valorTotal || 0) * (parseFloat(composicao.quantidade) || 1);
-                valorTotalAtualizado += valorComposicao;
-                composicoesModificadas = true;
-              }
-            }
-          });
-
-          if (composicoesModificadas) {
-            batch.update(doc(db, 'orcamentos', docSnap.id), {
-              valorTotal: valorTotalAtualizado,
-              ultimaAtualizacaoEAP: new Date().toISOString()
-            });
-            orcamentosAtualizados++;
-          }
-        }
-      });
-
-      if (orcamentosAtualizados > 0) {
-        await batch.commit();
-      }
-    } catch (error) {
-      console.error('Erro ao atualizar orçamentos após deleção do insumo:', error);
-    }
-  };
-
   const entrarModoExclusao = () => {
     setDeleteMode(true);
     setSelectedIds([]);
@@ -579,22 +515,48 @@ function Insumos() {
       return;
     }
 
-    const ok = window.confirm(
-      `Tem certeza que deseja excluir ${selectedIds.length} insumo(s)?\n\n` +
-        'Esta ação irá:\n' +
-        '• Remover os insumos de todas as composições que os utilizam\n' +
-        '• Recalcular os valores das composições afetadas\n' +
-        '• Atualizar os orçamentos que usam essas composições\n\n' +
-        'Esta ação não pode ser desfeita.'
-    );
-    if (!ok) return;
-
     try {
       setLoading(true);
       setError('');
 
-      await atualizarComposicoesSemInsumos(selectedIds);
-      await atualizarOrcamentosComComposicoes();
+      const qComp = query(
+        collection(db, 'composicoes'),
+        where('userId', '==', currentUser.uid)
+      );
+      const compSnap = await getDocs(qComp);
+      const composicoesAtuais = compSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+      const getComposicoesUsandoInsumo = (insumoId) =>
+        composicoesAtuais.filter((c) => {
+          if (Array.isArray(c.insumoIds) && c.insumoIds.includes(insumoId)) return true;
+          return (c.insumos || []).some((item) => item.insumoId === insumoId);
+        });
+
+      const bloqueados = selectedIds
+        .map((id) => {
+          const usadas = getComposicoesUsandoInsumo(id);
+          if (usadas.length === 0) return null;
+          const insumo = insumos.find((i) => i.id === id);
+          const nomeInsumo = insumo?.nome || insumo?.codigo || id;
+          const nomesComps = usadas.map((c) => c.nome || c.codigo || c.id);
+          return { nomeInsumo, nomesComps };
+        })
+        .filter(Boolean);
+
+      if (bloqueados.length > 0) {
+        const detalhe = bloqueados
+          .map((b) => `• ${b.nomeInsumo} — usado em: ${b.nomesComps.join(', ')}`)
+          .join(' ');
+        setError(
+          `Não é possível excluir ${bloqueados.length === 1 ? 'o insumo' : 'os insumos'} em uso por composição(ões). Remova-os das composições antes de excluir. ${detalhe}`
+        );
+        return;
+      }
+
+      const ok = window.confirm(
+        `Tem certeza que deseja excluir ${selectedIds.length} insumo(s)?\n\nEsta ação não pode ser desfeita.`
+      );
+      if (!ok) return;
 
       for (const id of selectedIds) {
         const precosRef = collection(db, 'insumos', id, 'precos');
@@ -608,7 +570,6 @@ function Insumos() {
         setEditingInsumo(null);
       }
 
-      await fetchComposicoes();
       setSuccessMessage(`${selectedIds.length} insumo(s) excluído(s) com sucesso.`);
       cancelarModoExclusao();
     } catch (error) {
@@ -734,11 +695,11 @@ function Insumos() {
   };
 
   return (
-    <div>
-      <div className="d-flex justify-content-between align-items-center mb-4">
+    <div className="page-lista">
+      <div className="page-lista-toolbar d-flex justify-content-between align-items-center mb-3">
         <div>
           <h1><FaBoxes className="me-2" />Insumos</h1>
-          <p className="text-muted">Gerencie os insumos básicos para suas composições</p>
+          <p className="text-muted mb-0">Gerencie os insumos básicos para suas composições</p>
         </div>
         {activeTab === 'meus' && (
           <div className="d-flex gap-2">
@@ -776,9 +737,10 @@ function Insumos() {
       {error && <Alert variant="danger" onClose={() => setError('')} dismissible>{error}</Alert>}
       {successMessage && <Alert variant="success" onClose={() => setSuccessMessage('')} dismissible>{successMessage}</Alert>}
 
-      <Tabs activeKey={activeTab} onSelect={handleTabSelect} className="mb-3">
+      <div className="page-lista-body">
+      <Tabs activeKey={activeTab} onSelect={handleTabSelect} className="mb-2">
         <Tab eventKey="meus" title="Meus Insumos">
-          <Card>
+          <Card className="lista-card">
             <Card.Header>
               <Row className="align-items-center">
                 <Col>
@@ -890,7 +852,7 @@ function Insumos() {
         </Tab>
 
         <Tab eventKey="seinfra" title={<span><FaDatabase className="me-1" />Catálogo SEINFRA</span>}>
-          <Card>
+          <Card className="lista-card">
             <Card.Header>
               <Row className="align-items-center">
                 <Col>
@@ -948,7 +910,7 @@ function Insumos() {
                     </thead>
                     <tbody>
                       {filteredSeinfra.map((item) => {
-                        const adicionado = jaAdicionado(item.codigo);
+                        const adicionado = jaAdicionado(item.codigo, item.nome);
                         return (
                           <tr key={item.codigo}>
                             <td>{item.codigo}</td>
@@ -983,6 +945,7 @@ function Insumos() {
           </Card>
         </Tab>
       </Tabs>
+      </div>
 
       {/* Modal para Adicionar/Editar Insumo */}
       <Modal show={showModal} size="lg" onHide={() => {

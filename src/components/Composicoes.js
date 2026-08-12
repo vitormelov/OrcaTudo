@@ -28,7 +28,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useAuth } from '../contexts/AuthContext';
-import { FaPlus, FaEdit, FaTrash, FaSearch, FaLayerGroup, FaBoxes, FaDatabase, FaTimes, FaCheck } from 'react-icons/fa';
+import { FaPlus, FaEdit, FaTrash, FaSearch, FaLayerGroup, FaBoxes, FaDatabase, FaTimes, FaCheck, FaCopy } from 'react-icons/fa';
 
 function Composicoes() {
   const { currentUser } = useAuth();
@@ -50,6 +50,7 @@ function Composicoes() {
   const [addingCodigo, setAddingCodigo] = useState(null);
   const [deleteMode, setDeleteMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState([]);
+  const [isCopying, setIsCopying] = useState(false);
   
   const [formData, setFormData] = useState({
     codigo: '',
@@ -185,14 +186,20 @@ function Composicoes() {
     }
   };
 
-  const jaAdicionada = (codigo) =>
-    composicoes.some(
-      (c) => (c.codigo || '').toString().toLowerCase() === String(codigo).toLowerCase()
-    );
+  const jaAdicionada = (codigo, nome) =>
+    composicoes.some((c) => {
+      const mesmoCodigo =
+        (c.codigo || '').toString().toLowerCase() === String(codigo || '').toLowerCase();
+      const mesmoNome =
+        nome && (c.nome || '').toLowerCase() === String(nome).toLowerCase();
+      return mesmoCodigo || mesmoNome;
+    });
 
   const abrirAdicionarSeinfra = (item) => {
-    if (jaAdicionada(item.codigo)) {
-      setError(`A composição "${item.codigo}" já está nas suas composições.`);
+    if (jaAdicionada(item.codigo, item.nome)) {
+      setError(
+        `A composição "${item.codigo} - ${item.nome}" já está nas suas composições (mesmo código ou nome).`
+      );
       setSuccessMessage('');
       return;
     }
@@ -207,6 +214,11 @@ function Composicoes() {
         .filter((i) => i.codigo)
         .map((i) => [String(i.codigo).toLowerCase(), i])
     );
+    const byNome = new Map(
+      insumosAtuais
+        .filter((i) => i.nome)
+        .map((i) => [String(i.nome).trim().toLowerCase(), i])
+    );
 
     const hojeStr = new Date().toISOString().split('T')[0];
     const agora = new Date();
@@ -215,9 +227,17 @@ function Composicoes() {
 
     for (const item of itensSeinfra) {
       const key = String(item.codigo).toLowerCase();
-      if (!byCodigo.has(key)) {
-        faltantes.push(item);
+      if (byCodigo.has(key)) continue;
+
+      const nomeKey = String(item.nome || '').trim().toLowerCase();
+      const existentePorNome = nomeKey ? byNome.get(nomeKey) : null;
+      if (existentePorNome) {
+        // Reutiliza o insumo com mesmo nome para não criar duplicata
+        byCodigo.set(key, existentePorNome);
+        continue;
       }
+
+      faltantes.push(item);
     }
 
     // Criar insumos primeiro e preços depois.
@@ -264,6 +284,7 @@ function Composicoes() {
 
       refs.forEach((r) => {
         byCodigo.set(String(r.codigo).toLowerCase(), r);
+        if (r.nome) byNome.set(String(r.nome).trim().toLowerCase(), r);
         criados.push(r);
       });
     }
@@ -279,6 +300,12 @@ function Composicoes() {
     setSuccessMessage('');
 
     try {
+      if (jaAdicionada(seinfraItem.codigo, seinfraItem.nome)) {
+        throw new Error(
+          `Já existe uma composição com o código "${seinfraItem.codigo}" ou o nome "${seinfraItem.nome}".`
+        );
+      }
+
       const insumosAtuais = insumos.length ? insumos : await fetchInsumos();
       const { byCodigo, criados } = await garantirInsumosSeinfra(
         seinfraItem.insumos || [],
@@ -383,22 +410,38 @@ function Composicoes() {
     setError('');
 
     try {
-      // Validar código obrigatório
-      if (!formData.codigo || !formData.codigo.trim()) {
+      const codigoNormalizado = (formData.codigo || '').trim().toLowerCase();
+      const nomeNormalizado = (formData.nome || '').trim().toLowerCase();
+
+      if (!codigoNormalizado) {
         setError('O código da composição é obrigatório.');
         setLoading(false);
         return;
       }
+      if (!nomeNormalizado) {
+        setError('O nome da composição é obrigatório.');
+        setLoading(false);
+        return;
+      }
 
-      // Verificar se já existe uma composição com o mesmo nome
-      const nomeNormalizado = formData.nome.trim().toLowerCase();
-      const composicaoExistente = composicoes.find(composicao => 
-        composicao.nome.toLowerCase() === nomeNormalizado && 
-        composicao.id !== editingComposicao?.id
+      const mesmoCodigo = composicoes.find(
+        (composicao) =>
+          (composicao.codigo || '').toString().trim().toLowerCase() === codigoNormalizado &&
+          composicao.id !== editingComposicao?.id
       );
+      if (mesmoCodigo) {
+        setError(`Já existe uma composição com o código "${mesmoCodigo.codigo}". Use um código diferente.`);
+        setLoading(false);
+        return;
+      }
 
-      if (composicaoExistente) {
-        setError('Já existe uma composição com este nome. Use um nome diferente.');
+      const mesmoNome = composicoes.find(
+        (composicao) =>
+          (composicao.nome || '').trim().toLowerCase() === nomeNormalizado &&
+          composicao.id !== editingComposicao?.id
+      );
+      if (mesmoNome) {
+        setError(`Já existe uma composição com o nome "${mesmoNome.nome}". Use um nome diferente.`);
         setLoading(false);
         return;
       }
@@ -415,6 +458,7 @@ function Composicoes() {
         nome: formData.nome.trim(),
         unidade: formData.unidade,
         insumos: formData.insumos || [],
+        insumoIds: (formData.insumos || []).map((i) => i.insumoId),
         valorTotal: calcularValorTotal(),
         userId: currentUser.uid,
         createdAt: editingComposicao ? editingComposicao.createdAt : new Date()
@@ -428,6 +472,7 @@ function Composicoes() {
 
       setShowModal(false);
       setEditingComposicao(null);
+      setIsCopying(false);
       resetForm();
       fetchComposicoes();
       setError('');
@@ -441,6 +486,7 @@ function Composicoes() {
 
   const handleEdit = (composicao) => {
     setEditingComposicao(composicao);
+    setIsCopying(false);
     const normalizedInsumos = (composicao.insumos || []).map(item => ({
       insumoId: item.insumoId || item.id || item.insumoIdRef || item?.insumoId, // fallback
       quantidade: item.quantidade ?? item.qtd ?? ''
@@ -448,6 +494,26 @@ function Composicoes() {
     setFormData({
       codigo: composicao.codigo || '',
       nome: composicao.nome || '',
+      unidade: composicao.unidade || '',
+      insumos: normalizedInsumos
+    });
+    setShowModal(true);
+  };
+
+  const handleCopyComposicao = (composicao) => {
+    setEditingComposicao(null);
+    setIsCopying(true);
+    setError('');
+    const normalizedInsumos = (composicao.insumos || [])
+      .map((item) => ({
+        insumoId: item.insumoId || item.id || item.insumoIdRef || item?.insumoId,
+        quantidade: item.quantidade ?? item.qtd ?? ''
+      }))
+      .filter((i) => i.insumoId);
+
+    setFormData({
+      codigo: '',
+      nome: composicao.nome ? `${composicao.nome} - Cópia` : '',
       unidade: composicao.unidade || '',
       insumos: normalizedInsumos
     });
@@ -488,14 +554,47 @@ function Composicoes() {
       return;
     }
 
-    const ok = window.confirm(
-      `Tem certeza que deseja excluir ${selectedIds.length} composição(ões)?\n\nEsta ação não pode ser desfeita.`
-    );
-    if (!ok) return;
-
     try {
       setLoading(true);
       setError('');
+
+      const qOrc = query(
+        collection(db, 'orcamentos'),
+        where('userId', '==', currentUser.uid)
+      );
+      const orcSnap = await getDocs(qOrc);
+      const usoPorComposicao = new Map();
+
+      orcSnap.docs.forEach((d) => {
+        const orc = d.data();
+        const nomeOrc = orc.nome || 'Orçamento sem nome';
+        (orc.composicoes || []).forEach((comp) => {
+          if (!comp.composicaoId || !selectedIds.includes(comp.composicaoId)) return;
+          if (!usoPorComposicao.has(comp.composicaoId)) {
+            usoPorComposicao.set(comp.composicaoId, new Set());
+          }
+          usoPorComposicao.get(comp.composicaoId).add(nomeOrc);
+        });
+      });
+
+      if (usoPorComposicao.size > 0) {
+        const detalhe = [...usoPorComposicao.entries()]
+          .map(([id, nomesOrc]) => {
+            const comp = composicoes.find((c) => c.id === id);
+            const nomeComp = comp?.nome || comp?.codigo || id;
+            return `• ${nomeComp} — usado em: ${[...nomesOrc].join(', ')}`;
+          })
+          .join(' ');
+        setError(
+          `Não é possível excluir ${usoPorComposicao.size === 1 ? 'a composição' : 'as composições'} em uso por orçamento(s). Remova-as dos orçamentos antes de excluir. ${detalhe}`
+        );
+        return;
+      }
+
+      const ok = window.confirm(
+        `Tem certeza que deseja excluir ${selectedIds.length} composição(ões)?\n\nEsta ação não pode ser desfeita.`
+      );
+      if (!ok) return;
 
       const CHUNK = 400;
       for (let i = 0; i < selectedIds.length; i += CHUNK) {
@@ -601,11 +700,11 @@ function Composicoes() {
   });
 
   return (
-    <div>
-      <div className="d-flex justify-content-between align-items-center mb-4">
+    <div className="page-lista">
+      <div className="page-lista-toolbar d-flex justify-content-between align-items-center mb-3">
         <div>
           <h1><FaLayerGroup className="me-2" />Composições</h1>
-          <p className="text-muted">Crie composições combinando insumos para serviços específicos</p>
+          <p className="text-muted mb-0">Crie composições combinando insumos para serviços específicos</p>
         </div>
         {activeTab === 'minhas' && (
           <div className="d-flex gap-2">
@@ -630,7 +729,15 @@ function Composicoes() {
                   <FaTrash className="me-2" />
                   Excluir
                 </Button>
-                <Button onClick={() => setShowModal(true)} variant="primary">
+                <Button
+                  onClick={() => {
+                    setEditingComposicao(null);
+                    setIsCopying(false);
+                    resetForm();
+                    setShowModal(true);
+                  }}
+                  variant="primary"
+                >
                   <FaPlus className="me-2" />
                   Nova Composição
                 </Button>
@@ -643,9 +750,10 @@ function Composicoes() {
       {error && <Alert variant="danger" onClose={() => setError('')} dismissible>{error}</Alert>}
       {successMessage && <Alert variant="success" onClose={() => setSuccessMessage('')} dismissible>{successMessage}</Alert>}
 
-      <Tabs activeKey={activeTab} onSelect={handleTabSelect} className="mb-3">
+      <div className="page-lista-body">
+      <Tabs activeKey={activeTab} onSelect={handleTabSelect} className="mb-2">
         <Tab eventKey="minhas" title="Minhas Composições">
-          <Card>
+          <Card className="lista-card">
             <Card.Header>
               <Row className="align-items-center">
                 <Col>
@@ -700,7 +808,7 @@ function Composicoes() {
                       <th style={{width: '15%'}}>Unidade</th>
                       <th style={{width: '15%'}}>Insumos</th>
                       <th style={{width: '15%'}}>Valor Total</th>
-                      {!deleteMode && <th style={{width: '10%'}}>Ações</th>}
+                      <th style={{width: '12%'}}>Ações</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -728,11 +836,21 @@ function Composicoes() {
                         <td style={{width: '15%'}}>{composicao.insumos?.length || 0} insumos</td>
                         <td style={{width: '15%'}}>R$ {composicao.valorTotal?.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) || '0,00'}</td>
                         {!deleteMode && (
-                          <td style={{width: '10%'}}>
+                          <td style={{width: '12%'}}>
+                            <Button
+                              size="sm"
+                              variant="outline-warning"
+                              className="me-2"
+                              onClick={() => handleCopyComposicao(composicao)}
+                              title="Gerar cópia"
+                            >
+                              <FaCopy />
+                            </Button>
                             <Button
                               size="sm"
                               variant="outline-primary"
                               onClick={() => handleEdit(composicao)}
+                              title="Editar"
                             >
                               <FaEdit />
                             </Button>
@@ -748,7 +866,7 @@ function Composicoes() {
         </Tab>
 
         <Tab eventKey="seinfra" title={<span><FaDatabase className="me-1" />Catálogo SEINFRA</span>}>
-          <Card>
+          <Card className="lista-card">
             <Card.Header>
               <Row className="align-items-center">
                 <Col>
@@ -807,7 +925,7 @@ function Composicoes() {
                     </thead>
                     <tbody>
                       {filteredSeinfra.map((item) => {
-                        const adicionada = jaAdicionada(item.codigo);
+                        const adicionada = jaAdicionada(item.codigo, item.nome);
                         return (
                           <tr key={item.codigo}>
                             <td>{item.codigo}</td>
@@ -843,20 +961,27 @@ function Composicoes() {
           </Card>
         </Tab>
       </Tabs>
+      </div>
 
       {/* Modal para Adicionar/Editar Composição */}
       <Modal show={showModal} onHide={() => {
         setShowModal(false);
         setEditingComposicao(null);
+        setIsCopying(false);
         resetForm();
       }} size="lg">
         <Modal.Header closeButton>
           <Modal.Title>
-            {editingComposicao ? 'Editar Composição' : 'Nova Composição'}
+            {editingComposicao ? 'Editar Composição' : isCopying ? 'Copiar Composição' : 'Nova Composição'}
           </Modal.Title>
         </Modal.Header>
         <Form onSubmit={handleSubmit}>
           <Modal.Body>
+            {isCopying && (
+              <Alert variant="info" className="mb-3">
+                Cópia gerada com os mesmos insumos. Informe um <strong>novo código</strong> e ajuste o nome, se quiser.
+              </Alert>
+            )}
             {/* Linha 1: Código + Unidade (conforme pedido) */}
             <Row>
               <Col md={4}>
