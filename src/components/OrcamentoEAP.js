@@ -552,33 +552,38 @@ function OrcamentoEAP() {
     setLoading(false);
   };
 
+  const montarPayloadExportacao = (extras = {}) => {
+    const bdiAbs = orcamento.bdiConfig ? valorComBDI - valorTotal : 0;
+    return {
+      orcamento: {
+        ...orcamento,
+        composicoes: (orcamento.composicoes || []).map((c) => ({
+          ...c,
+          codigo:
+            c.codigo ||
+            catalogoComposicoes.find((x) => x.id === c.composicaoId)?.codigo ||
+            ''
+        }))
+      },
+      calcularSubvalores,
+      valorTotal,
+      valorComBDI: orcamento.bdiConfig ? valorComBDI : valorTotal,
+      bdiValor: bdiAbs,
+      revisao: formatRevisao(getRevisao(orcamento)),
+      elaboradoPor:
+        currentUser?.displayName ||
+        currentUser?.email ||
+        orcamento.elaboradoPor ||
+        '',
+      status: orcamento.status || '',
+      ...extras
+    };
+  };
+
   const exportarEAPPdf = () => {
     if (!orcamento) return;
     try {
-      const bdiAbs = orcamento.bdiConfig ? valorComBDI - valorTotal : 0;
-      exportarEapPlanilhaPdf({
-        orcamento: {
-          ...orcamento,
-          composicoes: (orcamento.composicoes || []).map((c) => ({
-            ...c,
-            codigo:
-              c.codigo ||
-              catalogoComposicoes.find((x) => x.id === c.composicaoId)?.codigo ||
-              ''
-          }))
-        },
-        calcularSubvalores,
-        valorTotal,
-        valorComBDI: orcamento.bdiConfig ? valorComBDI : valorTotal,
-        bdiValor: bdiAbs,
-        revisao: formatRevisao(getRevisao(orcamento)),
-        elaboradoPor:
-          currentUser?.displayName ||
-          currentUser?.email ||
-          orcamento.elaboradoPor ||
-          '',
-        status: orcamento.status || ''
-      });
+      exportarEapPlanilhaPdf(montarPayloadExportacao());
     } catch (e) {
       console.error(e);
       alert('Erro ao gerar PDF');
@@ -588,33 +593,27 @@ function OrcamentoEAP() {
   const exportarEAPExcel = () => {
     if (!orcamento) return;
     try {
-      const bdiAbs = orcamento.bdiConfig ? valorComBDI - valorTotal : 0;
-      exportarEapPlanilhaOrcamento({
-        orcamento: {
-          ...orcamento,
-          composicoes: (orcamento.composicoes || []).map((c) => ({
-            ...c,
-            codigo:
-              c.codigo ||
-              catalogoComposicoes.find((x) => x.id === c.composicaoId)?.codigo ||
-              ''
-          }))
-        },
-        calcularSubvalores,
-        valorTotal,
-        valorComBDI: orcamento.bdiConfig ? valorComBDI : valorTotal,
-        bdiValor: bdiAbs,
-        revisao: formatRevisao(getRevisao(orcamento)),
-        elaboradoPor:
-          currentUser?.displayName ||
-          currentUser?.email ||
-          orcamento.elaboradoPor ||
-          '',
-        status: orcamento.status || ''
-      });
+      exportarEapPlanilhaOrcamento(montarPayloadExportacao());
     } catch (e) {
       console.error(e);
       alert('Erro ao gerar Excel');
+    }
+  };
+
+  const exportarPlanilhaVenda = (formato) => {
+    if (!orcamento) return;
+    if (!orcamento.bdiConfig) {
+      alert('Configure e aplique o BDI antes de gerar a planilha de venda.');
+      return;
+    }
+    try {
+      const fatorBdi = 1 + calcularBDI() / 100;
+      const payload = montarPayloadExportacao({ modoVenda: true, fatorBdi });
+      if (formato === 'pdf') exportarEapPlanilhaPdf(payload);
+      else exportarEapPlanilhaOrcamento(payload);
+    } catch (e) {
+      console.error(e);
+      alert(`Erro ao gerar planilha de venda (${formato.toUpperCase()})`);
     }
   };
 
@@ -663,6 +662,7 @@ function OrcamentoEAP() {
         orcamentoId={orcamentoId}
         exportarEAPPdf={exportarEAPPdf}
         exportarEAPExcel={exportarEAPExcel}
+        exportarPlanilhaVenda={exportarPlanilhaVenda}
         setShowBdi={setShowBdi}
         atualizarStatus={atualizarStatus}
         getStatusColor={getStatusColor}

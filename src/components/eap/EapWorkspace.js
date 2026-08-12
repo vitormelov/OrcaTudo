@@ -160,7 +160,7 @@ export default function EapWorkspace(props) {
     abrirCriarNo, abrirEditarNo, removerPacote, removerGrupo, removerSubgrupo,
     abrirAddComp, abrirEditComp, removerComposicao, atualizarQtdInline,
     salvarEAP, loading, navigate, sairDaEap, orcamentoId,
-    exportarEAPPdf, exportarEAPExcel, setShowBdi, atualizarStatus,
+    exportarEAPPdf, exportarEAPExcel, exportarPlanilhaVenda, setShowBdi, atualizarStatus,
     getStatusColor, formatarDataAmigavel, activeDragId, setActiveDragId,
     somenteLeitura = false,
     formatRevisao = formatRevisaoUtil,
@@ -750,11 +750,26 @@ export default function EapWorkspace(props) {
           <Dropdown>
             <Dropdown.Toggle size="sm" variant="outline-secondary">Exportar</Dropdown.Toggle>
             <Dropdown.Menu align="end">
+              <Dropdown.Header>Planilha de custo</Dropdown.Header>
+              <Dropdown.Item onClick={exportarEAPExcel}>
+                <FaFileExcel className="me-2" /> Excel
+              </Dropdown.Item>
               <Dropdown.Item onClick={exportarEAPPdf}>
                 <FaFilePdf className="me-2" /> PDF
               </Dropdown.Item>
-              <Dropdown.Item onClick={exportarEAPExcel}>
+              <Dropdown.Divider />
+              <Dropdown.Header>Planilha de venda</Dropdown.Header>
+              <Dropdown.Item
+                onClick={() => exportarPlanilhaVenda?.('excel')}
+                title="Valores com BDI embutido (para o cliente)"
+              >
                 <FaFileExcel className="me-2" /> Excel
+              </Dropdown.Item>
+              <Dropdown.Item
+                onClick={() => exportarPlanilhaVenda?.('pdf')}
+                title="Valores com BDI embutido (para o cliente)"
+              >
+                <FaFilePdf className="me-2" /> PDF
               </Dropdown.Item>
             </Dropdown.Menu>
           </Dropdown>

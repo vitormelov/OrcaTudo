@@ -29,19 +29,25 @@ export function formatDataBR(value) {
 
 /**
  * Monta as linhas da tabela orçamentária (hierarquia EAP).
- * @returns {{ rows: Array<{ kind: string|null, cells: any[] }>, baseTotal: number, bdiAbs: number, venda: number }}
+ * @param {object} opts
+ * @param {boolean} [opts.modoVenda] — embute o BDI proporcionalmente nos valores (sem exibir o BDI)
+ * @param {number} [opts.fatorBdi] — multiplicador (ex.: 1.2 para BDI 20%)
  */
 export function buildEapTabelaRows({
   orcamento,
   calcularSubvalores,
   valorTotal,
   valorComBDI,
-  bdiValor
+  bdiValor,
+  modoVenda = false,
+  fatorBdi = 1
 }) {
   const rows = [];
   const push = (cells, kind = null) => {
     rows.push({ kind, cells });
   };
+
+  const fator = modoVenda && Number.isFinite(fatorBdi) && fatorBdi > 0 ? fatorBdi : 1;
 
   const totGeralCats = { Material: 0, 'Mão de Obra': 0, Equipamento: 0, Serviço: 0 };
   (orcamento.composicoes || []).forEach((c) => {
@@ -53,15 +59,20 @@ export function buildEapTabelaRows({
   });
   const totGeral = matMoFromCats(totGeralCats);
   const baseTotal = valorTotal || totGeral.total || 0;
-  const inc = (valor) => (baseTotal > 0 ? valor / baseTotal : 0);
+  // Na planilha de venda a incidência é sobre o total de venda
+  const totalReferencia = modoVenda ? baseTotal * fator : baseTotal;
+  const inc = (valorComFator) => (totalReferencia > 0 ? valorComFator / totalReferencia : 0);
 
   const summaryRow = (no, descricao, cats) => {
     const t = matMoFromCats(cats);
+    const mat = t.mat * fator;
+    const mo = t.mo * fator;
+    const total = t.total * fator;
     return [
       no, '', descricao, '', null,
       null, null, null,
-      t.mat, t.mo, t.total,
-      inc(t.total)
+      mat, mo, total,
+      inc(total)
     ];
   };
 
@@ -71,19 +82,22 @@ export function buildEapTabelaRows({
     const q = Number(parseFloat(comp.quantidade));
     const qtd = Number.isFinite(q) ? q : 0;
     const divisor = qtd || 1;
+    const mat = t.mat * fator;
+    const mo = t.mo * fator;
+    const total = t.total * fator;
     return [
       no,
       comp.codigo || '',
       comp.nome || '',
       comp.unidade || '',
       qtd,
-      t.mat / divisor,
-      t.mo / divisor,
-      t.total / divisor,
-      t.mat,
-      t.mo,
-      t.total,
-      inc(t.total)
+      mat / divisor,
+      mo / divisor,
+      total / divisor,
+      mat,
+      mo,
+      total,
+      inc(total)
     ];
   };
 
@@ -161,11 +175,16 @@ export function buildEapTabelaRows({
     typeof bdiValor === 'number' ? bdiValor : Math.max(0, (valorComBDI || 0) - (valorTotal || 0));
   const venda = typeof valorComBDI === 'number' ? valorComBDI : baseTotal + bdiAbs;
 
-  push(['', '', 'CUSTO TOTAL', '', null, null, null, null, null, null, baseTotal, null], 'footer');
-  push(['', '', 'BDI', '', null, null, null, null, null, null, bdiAbs, null], 'footer');
-  push(['', '', 'VALOR DE VENDA', '', null, null, null, null, null, null, venda, null], 'footer');
+  if (modoVenda) {
+    // Cliente vê só o total de venda — BDI já embutido nos unitários
+    push(['', '', 'VALOR DE VENDA', '', null, null, null, null, null, null, venda, null], 'footer');
+  } else {
+    push(['', '', 'CUSTO TOTAL', '', null, null, null, null, null, null, baseTotal, null], 'footer');
+    push(['', '', 'BDI', '', null, null, null, null, null, null, bdiAbs, null], 'footer');
+    push(['', '', 'VALOR DE VENDA', '', null, null, null, null, null, null, venda, null], 'footer');
+  }
 
-  return { rows, baseTotal, bdiAbs, venda };
+  return { rows, baseTotal, bdiAbs, venda, fator };
 }
 
 export function getEapCabecalhoMeta({

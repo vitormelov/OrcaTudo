@@ -38,7 +38,10 @@ function applyRowStyle(ws, rowIndex, cols, style) {
 }
 
 /**
- * Exporta a EAP no layout da planilha "Orçamento R09".
+ * Exporta a EAP no layout da planilha orçamentária ou de venda.
+ * @param {object} opts
+ * @param {boolean} [opts.modoVenda]
+ * @param {number} [opts.fatorBdi]
  */
 export function exportarEapPlanilhaOrcamento({
   orcamento,
@@ -48,7 +51,9 @@ export function exportarEapPlanilhaOrcamento({
   bdiValor,
   revisao,
   elaboradoPor,
-  status
+  status,
+  modoVenda = false,
+  fatorBdi = 1
 }) {
   const rows = [];
   const merges = [];
@@ -66,8 +71,10 @@ export function exportarEapPlanilhaOrcamento({
     nomeObra, local, cliente, revLabel, elab, statusLabel, dataExport, ultimaAtualizacao
   } = getEapCabecalhoMeta({ orcamento, revisao, elaboradoPor, status });
 
+  const tituloPlanilha = modoVenda ? 'PLANILHA DE VENDA' : 'PLANILHA ORÇAMENTÁRIA';
+
   const titleRow = push([
-    'ORÇATUDO', '', '', '', 'PLANILHA ORÇAMENTÁRIA', '', '', '', '', '', '', ''
+    'ORÇATUDO', '', '', '', tituloPlanilha, '', '', '', '', '', '', ''
   ]);
   merges.push(
     { s: { r: titleRow, c: 0 }, e: { r: titleRow, c: 3 } },
@@ -132,7 +139,9 @@ export function exportarEapPlanilhaOrcamento({
     calcularSubvalores,
     valorTotal,
     valorComBDI,
-    bdiValor
+    bdiValor,
+    modoVenda,
+    fatorBdi
   });
 
   const tableStartRow = rows.length;
@@ -233,9 +242,11 @@ export function exportarEapPlanilhaOrcamento({
   });
 
   const wb = XLSX.utils.book_new();
-  const sheetName = `Orçamento R${revLabel}`.slice(0, 31);
+  const sheetPrefix = modoVenda ? 'Venda' : 'Orçamento';
+  const sheetName = `${sheetPrefix} R${revLabel}`.slice(0, 31);
   XLSX.utils.book_append_sheet(wb, ws, sheetName);
 
   const safeName = nomeObra.replace(/[^a-zA-Z0-9À-ÿ _-]/g, '_').slice(0, 60);
-  XLSX.writeFile(wb, `Orcamento_${safeName}_R${revLabel}.xlsx`);
+  const filePrefix = modoVenda ? 'PlanilhaVenda' : 'Orcamento';
+  XLSX.writeFile(wb, `${filePrefix}_${safeName}_R${revLabel}.xlsx`);
 }

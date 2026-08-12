@@ -50,6 +50,8 @@ function cellsToPdfRow(cells) {
 
 /**
  * Exporta a EAP em PDF no mesmo estilo da planilha Excel.
+ * @param {boolean} [opts.modoVenda]
+ * @param {number} [opts.fatorBdi]
  */
 export function exportarEapPlanilhaPdf({
   orcamento,
@@ -59,7 +61,9 @@ export function exportarEapPlanilhaPdf({
   bdiValor,
   revisao,
   elaboradoPor,
-  status
+  status,
+  modoVenda = false,
+  fatorBdi = 1
 }) {
   const meta = getEapCabecalhoMeta({ orcamento, revisao, elaboradoPor, status });
   const { rows: tabelaRows } = buildEapTabelaRows({
@@ -67,8 +71,12 @@ export function exportarEapPlanilhaPdf({
     calcularSubvalores,
     valorTotal,
     valorComBDI,
-    bdiValor
+    bdiValor,
+    modoVenda,
+    fatorBdi
   });
+
+  const tituloPlanilha = modoVenda ? 'PLANILHA DE VENDA' : 'PLANILHA ORÇAMENTÁRIA';
 
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
   const pageWidth = doc.internal.pageSize.getWidth();
@@ -82,7 +90,7 @@ export function exportarEapPlanilhaPdf({
   doc.setFontSize(14);
   doc.text('ORÇATUDO', marginX, 8);
   doc.setFontSize(11);
-  doc.text('PLANILHA ORÇAMENTÁRIA', pageWidth - marginX, 8, { align: 'right' });
+  doc.text(tituloPlanilha, pageWidth - marginX, 8, { align: 'right' });
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
   doc.text(`Rev. ${meta.revLabel}  ·  ${meta.statusLabel}`, pageWidth - marginX, 14, { align: 'right' });
@@ -225,5 +233,6 @@ export function exportarEapPlanilhaPdf({
   });
 
   const safeName = meta.nomeObra.replace(/[^a-zA-Z0-9À-ÿ _-]/g, '_').slice(0, 60);
-  doc.save(`Orcamento_${safeName}_R${meta.revLabel}.pdf`);
+  const filePrefix = modoVenda ? 'PlanilhaVenda' : 'Orcamento';
+  doc.save(`${filePrefix}_${safeName}_R${meta.revLabel}.pdf`);
 }
