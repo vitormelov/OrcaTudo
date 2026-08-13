@@ -24,6 +24,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useAuth } from '../contexts/AuthContext';
+import { useEmpresa } from '../contexts/EmpresaContext';
 import { FaPlus, FaEdit, FaTrash, FaSearch, FaFileInvoiceDollar, FaEye, FaCopy, FaSort, FaSortUp, FaSortDown, FaCodeBranch, FaArchive, FaList } from 'react-icons/fa';
 import { useNavigate } from 'react-router-dom';
 import { copiarEAPCompleta, formatRevisao, getObraId, getRevisao } from '../utils/eapCopy';
@@ -31,6 +32,7 @@ import { formatCurrency } from '../utils/formatters';
 
 function Orcamentos() {
   const { currentUser } = useAuth();
+  const { empresaId, podeEditar } = useEmpresa();
   const navigate = useNavigate();
   const [orcamentos, setOrcamentos] = useState([]);
   const [showModal, setShowModal] = useState(false);
@@ -60,18 +62,18 @@ function Orcamentos() {
   });
 
   useEffect(() => {
-    if (currentUser) {
+    if (currentUser && empresaId) {
       fetchOrcamentos();
     }
-  }, [currentUser]);
+  }, [currentUser, empresaId]);
 
   const fetchOrcamentos = async () => {
     try {
-      if (!currentUser) return;
+      if (!currentUser || !empresaId) return;
       setError('');
       const q = query(
         collection(db, 'orcamentos'), 
-        where('userId', '==', currentUser.uid)
+        where('empresaId', '==', empresaId)
       );
       const querySnapshot = await getDocs(q);
       const orcamentosData = querySnapshot.docs.map(doc => ({
@@ -92,6 +94,10 @@ function Orcamentos() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!podeEditar) {
+      setError('Você não tem permissão para criar ou editar orçamentos.');
+      return;
+    }
     setLoading(true);
     setError('');
 
@@ -122,6 +128,7 @@ function Orcamentos() {
           composicoes: [],
           pacotes: [],
           userId: currentUser.uid,
+          empresaId,
           createdAt: new Date(),
           valorTotal: 0,
           status: 'Em Análise',
@@ -158,6 +165,7 @@ function Orcamentos() {
   };
 
   const handleDelete = async (id) => {
+    if (!podeEditar) return;
     if (window.confirm('Tem certeza que deseja excluir este orçamento?')) {
       try {
         await deleteDoc(doc(db, 'orcamentos', id));
@@ -206,6 +214,7 @@ function Orcamentos() {
   };
 
   const handleNovaRevisao = async (orcamento) => {
+    if (!podeEditar) return;
     if (orcamento.revisaoTravada) {
       setError('Esta revisão já está travada. Abra a revisão mais recente do projeto.');
       return;
@@ -245,6 +254,7 @@ function Orcamentos() {
         endereco: orcamento.endereco || '',
         data: orcamento.data || new Date().toISOString().split('T')[0],
         userId: currentUser.uid,
+        empresaId,
         createdAt: new Date(),
         valorTotal: orcamento.valorTotal || 0,
         totaisPorCategoria: orcamento.totaisPorCategoria || null,
@@ -272,6 +282,7 @@ function Orcamentos() {
 
   const handleSubmitCopy = async (e) => {
     e.preventDefault();
+    if (!podeEditar) return;
     setLoading(true);
     setError('');
 
@@ -288,6 +299,7 @@ function Orcamentos() {
       const novoOrcamento = {
         ...copyFormData,
         userId: currentUser.uid,
+        empresaId,
         createdAt: new Date(),
         valorTotal: orcamentoOriginal.valorTotal || 0,
         totaisPorCategoria: orcamentoOriginal.totaisPorCategoria || null,
@@ -466,7 +478,7 @@ function Orcamentos() {
           <p className="text-muted mb-0">Crie e gerencie orçamentos para seus projetos</p>
         </div>
         <div className="d-flex gap-2">
-          {!mostrarObsoletos && (
+          {!mostrarObsoletos && podeEditar && (
             <Button onClick={() => setShowModal(true)} variant="primary">
               <FaPlus className="me-2" />
               Novo Orçamento
@@ -497,6 +509,11 @@ function Orcamentos() {
       </div>
 
       {error && <Alert variant="danger">{error}</Alert>}
+      {!podeEditar && (
+        <Alert variant="secondary">
+          Você está em modo somente leitura. Peça ao administrador a permissão de colaborador para criar, editar ou excluir.
+        </Alert>
+      )}
 
       {mostrarObsoletos && (
         <Alert variant="info" className="mb-3">
@@ -601,7 +618,7 @@ function Orcamentos() {
                       >
                         <FaEye />
                       </Button>
-                      {!orcamento.revisaoTravada && (
+                      {podeEditar && !orcamento.revisaoTravada && (
                         <Button
                           size="sm"
                           variant="outline-success"
@@ -613,16 +630,18 @@ function Orcamentos() {
                           <FaCodeBranch />
                         </Button>
                       )}
-                      <Button
-                        size="sm"
-                        variant="outline-warning"
-                        className="me-2"
-                        onClick={() => handleCopyOrcamento(orcamento)}
-                        title="Copiar Orçamento"
-                      >
-                        <FaCopy />
-                      </Button>
-                      {!orcamento.revisaoTravada && (
+                      {podeEditar && (
+                        <Button
+                          size="sm"
+                          variant="outline-warning"
+                          className="me-2"
+                          onClick={() => handleCopyOrcamento(orcamento)}
+                          title="Copiar Orçamento"
+                        >
+                          <FaCopy />
+                        </Button>
+                      )}
+                      {podeEditar && !orcamento.revisaoTravada && (
                         <Button
                           size="sm"
                           variant="outline-primary"
@@ -633,14 +652,16 @@ function Orcamentos() {
                           <FaEdit />
                         </Button>
                       )}
-                      <Button
-                        size="sm"
-                        variant="outline-danger"
-                        onClick={() => handleDelete(orcamento.id)}
-                        title="Excluir"
-                      >
-                        <FaTrash />
-                      </Button>
+                      {podeEditar && (
+                        <Button
+                          size="sm"
+                          variant="outline-danger"
+                          onClick={() => handleDelete(orcamento.id)}
+                          title="Excluir"
+                        >
+                          <FaTrash />
+                        </Button>
+                      )}
                     </td>
                   </tr>
                 ))}

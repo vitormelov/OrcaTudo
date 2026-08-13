@@ -14,56 +14,71 @@ import OrcamentoEAP from './components/OrcamentoEAP';
 import CurvaABC from './components/CurvaABC';
 import Comparativo from './components/Comparativo';
 import Login from './components/Login';
+import SelecaoEmpresa from './components/SelecaoEmpresa';
+import AdminUsuarios from './components/AdminUsuarios';
 import { AuthProvider } from './contexts/AuthContext';
+import { EmpresaProvider } from './contexts/EmpresaContext';
 import PrivateRoute from './components/PrivateRoute';
 
 function App() {
   return (
     <AuthProvider>
       <Router>
-        <div className="App">
-          <Navbar />
-          <Container className="mt-4">
-            <Routes>
-              <Route path="/login" element={<Login />} />
-              <Route path="/" element={
-                <PrivateRoute>
-                  <Dashboard />
-                </PrivateRoute>
-              } />
-              <Route path="/insumos" element={
-                <PrivateRoute>
-                  <Insumos />
-                </PrivateRoute>
-              } />
-              <Route path="/composicoes" element={
-                <PrivateRoute>
-                  <Composicoes />
-                </PrivateRoute>
-              } />
-              <Route path="/orcamentos" element={
-                <PrivateRoute>
-                  <Orcamentos />
-                </PrivateRoute>
-              } />
-              <Route path="/orcamentos/:id/eap" element={
-                <PrivateRoute>
-                  <OrcamentoEAP />
-                </PrivateRoute>
-              } />
-              <Route path="/orcamentos/:id/curva-abc" element={
-                <PrivateRoute>
-                  <CurvaABC />
-                </PrivateRoute>
-              } />
-              <Route path="/comparativo" element={
-                <PrivateRoute>
-                  <Comparativo />
-                </PrivateRoute>
-              } />
-            </Routes>
-          </Container>
-        </div>
+        <EmpresaProvider>
+          <div className="App">
+            <Navbar />
+            <Container className="mt-4">
+              <Routes>
+                <Route path="/login" element={<Login />} />
+                <Route path="/empresas" element={
+                  <PrivateRoute requireEmpresa={false}>
+                    <SelecaoEmpresa />
+                  </PrivateRoute>
+                } />
+                <Route path="/admin" element={
+                  <PrivateRoute adminOnly requireEmpresa={false}>
+                    <AdminUsuarios />
+                  </PrivateRoute>
+                } />
+                <Route path="/" element={
+                  <PrivateRoute>
+                    <Dashboard />
+                  </PrivateRoute>
+                } />
+                <Route path="/insumos" element={
+                  <PrivateRoute>
+                    <Insumos />
+                  </PrivateRoute>
+                } />
+                <Route path="/composicoes" element={
+                  <PrivateRoute>
+                    <Composicoes />
+                  </PrivateRoute>
+                } />
+                <Route path="/orcamentos" element={
+                  <PrivateRoute>
+                    <Orcamentos />
+                  </PrivateRoute>
+                } />
+                <Route path="/orcamentos/:id/eap" element={
+                  <PrivateRoute>
+                    <OrcamentoEAP />
+                  </PrivateRoute>
+                } />
+                <Route path="/orcamentos/:id/curva-abc" element={
+                  <PrivateRoute>
+                    <CurvaABC />
+                  </PrivateRoute>
+                } />
+                <Route path="/comparativo" element={
+                  <PrivateRoute>
+                    <Comparativo />
+                  </PrivateRoute>
+                } />
+              </Routes>
+            </Container>
+          </div>
+        </EmpresaProvider>
       </Router>
     </AuthProvider>
   );

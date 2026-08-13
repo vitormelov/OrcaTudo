@@ -1,35 +1,122 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Regras para insumos
-    match /insumos/{document} {
-      allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
-      allow read, update, delete: if request.auth != null && request.auth.uid == resource.data.userId;
+    function isSignedIn() {
+      return request.auth != null;
     }
 
-    // Subcoleção de preços dos insumos
-    // getAfter enxerga o documento pai criado no mesmo batch
+    function tokenEmail() {
+      return isSignedIn() && request.auth.token.email is string
+        ? request.auth.token.email.lower()
+        : '';
+    }
+
+    function isAdminEmail() {
+      return tokenEmail() == 'vitormelov@gmail.com';
+    }
+
+    function isAdmin() {
+      return isAdminEmail() || (
+        isSignedIn() &&
+        exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.isAdmin == true
+      );
+    }
+
+    function isUsuarioBloqueado() {
+      return isSignedIn() &&
+        !isAdmin() &&
+        exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.bloqueado == true;
+    }
+
+    function isVinculado(empresaId) {
+      return isSignedIn() && empresaId is string &&
+        exists(/databases/$(database)/documents/empresas/$(empresaId)/membros/$(request.auth.uid));
+    }
+
+    function empresaAtiva(empresaId) {
+      return empresaId is string &&
+        exists(/databases/$(database)/documents/empresas/$(empresaId)) &&
+        get(/databases/$(database)/documents/empresas/$(empresaId)).data.bloqueada != true;
+    }
+
+    function isMember(empresaId) {
+      return isSignedIn() && !isUsuarioBloqueado() && empresaId is string && (
+        isAdmin() ||
+        (empresaAtiva(empresaId) && isVinculado(empresaId))
+      );
+    }
+
+    function isColaborador(empresaId) {
+      return isAdmin() || (
+        isMember(empresaId) &&
+        get(/databases/$(database)/documents/empresas/$(empresaId)/membros/$(request.auth.uid)).data.colaborador == true
+      );
+    }
+
+    function ownsLegacy(data) {
+      return isSignedIn() && !isUsuarioBloqueado() && data.userId == request.auth.uid;
+    }
+
+    function canWriteTenant(data) {
+      return ('empresaId' in data && data.empresaId is string)
+        ? isColaborador(data.empresaId)
+        : ownsLegacy(data);
+    }
+
+    match /usuarios/{uid} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+      allow create: if isAdmin() || (isSignedIn() && request.auth.uid == uid);
+      allow update: if isAdmin() || (
+        isSignedIn() &&
+        request.auth.uid == uid &&
+        request.resource.data.isAdmin == resource.data.isAdmin
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /empresas/{empresaId} {
+      allow read: if isAdmin() || isVinculado(empresaId);
+      allow create, update, delete: if isAdmin();
+
+      match /membros/{uid} {
+        allow read: if isAdmin() || request.auth.uid == uid || isMember(empresaId);
+        allow create, update, delete: if isAdmin();
+      }
+    }
+
+    match /insumos/{document} {
+      allow create: if isColaborador(request.resource.data.empresaId)
+        && request.resource.data.userId == request.auth.uid;
+      allow read: if isMember(resource.data.empresaId) || ownsLegacy(resource.data);
+      allow update, delete: if canWriteTenant(resource.data);
+    }
+
     match /insumos/{insumoId}/precos/{precoId} {
-      allow read: if request.auth != null &&
-        exists(/databases/$(database)/documents/insumos/$(insumoId)) &&
-        request.auth.uid == get(/databases/$(database)/documents/insumos/$(insumoId)).data.userId;
-      allow write: if request.auth != null &&
-        request.auth.uid == getAfter(/databases/$(database)/documents/insumos/$(insumoId)).data.userId;
+      allow read: if isSignedIn() && (
+        isMember(get(/databases/$(database)/documents/insumos/$(insumoId)).data.empresaId) ||
+        request.auth.uid == get(/databases/$(database)/documents/insumos/$(insumoId)).data.userId
+      );
+      allow write: if isSignedIn() && canWriteTenant(
+        getAfter(/databases/$(database)/documents/insumos/$(insumoId)).data
+      );
     }
-    
-    // Regras para composições
+
     match /composicoes/{document} {
-      allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
-      allow read, update, delete: if request.auth != null && request.auth.uid == resource.data.userId;
+      allow create: if isColaborador(request.resource.data.empresaId)
+        && request.resource.data.userId == request.auth.uid;
+      allow read: if isMember(resource.data.empresaId) || ownsLegacy(resource.data);
+      allow update, delete: if canWriteTenant(resource.data);
     }
-    
-    // Regras para orçamentos
+
     match /orcamentos/{document} {
-      allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
-      allow read, update, delete: if request.auth != null && request.auth.uid == resource.data.userId;
+      allow create: if isColaborador(request.resource.data.empresaId)
+        && request.resource.data.userId == request.auth.uid;
+      allow read: if isMember(resource.data.empresaId) || ownsLegacy(resource.data);
+      allow update, delete: if canWriteTenant(resource.data);
     }
-    
-    // Regra padrão - negar acesso a todas as outras coleções
+
     match /{document=**} {
       allow read, write: if false;
     }

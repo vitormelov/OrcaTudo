@@ -41,12 +41,14 @@ import {
 
 import { db } from '../firebase/config';
 import { useAuth } from '../contexts/AuthContext';
+import { useEmpresa } from '../contexts/EmpresaContext';
 import { FaPlus, FaEdit, FaTrash, FaSearch, FaBoxes, FaDatabase, FaSort, FaSortUp, FaSortDown, FaTimes, FaCheck } from 'react-icons/fa';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend);
 
 function Insumos() {
   const { currentUser } = useAuth();
+  const { empresaId, podeEditar } = useEmpresa();
   const [insumos, setInsumos] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [editingInsumo, setEditingInsumo] = useState(null);
@@ -127,19 +129,19 @@ function Insumos() {
   const categorias = ['Material', 'Mão de Obra', 'Equipamento', 'Serviço'];
 
   useEffect(() => {
-    if (currentUser) {
+    if (currentUser && empresaId) {
       fetchInsumos();
       fetchComposicoes();
     }
-  }, [currentUser]);
+  }, [currentUser, empresaId]);
 
   const fetchInsumos = async () => {
     try {
-      if (!currentUser) return;
+      if (!currentUser || !empresaId) return;
       setError('');
       const q = query(
         collection(db, 'insumos'), 
-        where('userId', '==', currentUser.uid)
+        where('empresaId', '==', empresaId)
       );
       const querySnapshot = await getDocs(q);
       const insumosData = querySnapshot.docs.map(doc => ({
@@ -156,10 +158,10 @@ function Insumos() {
 
   const fetchComposicoes = async () => {
     try {
-      if (!currentUser) return;
+      if (!currentUser || !empresaId) return;
       const q = query(
         collection(db, 'composicoes'), 
-        where('userId', '==', currentUser.uid)
+        where('empresaId', '==', empresaId)
       );
       const querySnapshot = await getDocs(q);
       const composicoesData = querySnapshot.docs.map(doc => ({
@@ -220,7 +222,7 @@ function Insumos() {
   };
 
   const confirmarAdicionarSeinfra = async () => {
-    if (!seinfraItem || !currentUser) return;
+    if (!seinfraItem || !currentUser || !podeEditar) return;
     setAddingCodigo(seinfraItem.codigo);
     setLoading(true);
     setError('');
@@ -250,6 +252,7 @@ function Insumos() {
         empresa: 'SEINFRA',
         fonte: 'SEINFRA',
         userId: currentUser.uid,
+        empresaId,
         createdAt: agora,
         updatedAt: agora
       };
@@ -307,7 +310,7 @@ function Insumos() {
     try {
       const compsQ = query(
         collection(db, 'composicoes'), 
-        where('userId', '==', currentUser.uid), 
+        where('empresaId', '==', empresaId), 
         where('insumoIds', 'array-contains', insumoId)
       );
       const compsSnap = await getDocs(compsQ);
@@ -363,6 +366,10 @@ function Insumos() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!podeEditar) {
+      setError('Você não tem permissão para criar ou editar insumos.');
+      return;
+    }
     setLoading(true);
     setError('');
 
@@ -415,6 +422,7 @@ function Insumos() {
         data: hojeStr,
         empresa: formData.empresa,
         userId: currentUser.uid,
+        empresaId,
         createdAt: editingInsumo ? editingInsumo.createdAt : agora,
         updatedAt: agora
       };
@@ -510,6 +518,7 @@ function Insumos() {
   };
 
   const handleBulkDelete = async () => {
+    if (!podeEditar) return;
     if (selectedIds.length === 0) {
       setError('Selecione ao menos um insumo para excluir.');
       return;
@@ -521,7 +530,7 @@ function Insumos() {
 
       const qComp = query(
         collection(db, 'composicoes'),
-        where('userId', '==', currentUser.uid)
+        where('empresaId', '==', empresaId)
       );
       const compSnap = await getDocs(qComp);
       const composicoesAtuais = compSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
@@ -701,7 +710,7 @@ function Insumos() {
           <h1><FaBoxes className="me-2" />Insumos</h1>
           <p className="text-muted mb-0">Gerencie os insumos básicos para suas composições</p>
         </div>
-        {activeTab === 'meus' && (
+        {activeTab === 'meus' && podeEditar && (
           <div className="d-flex gap-2">
             {deleteMode ? (
               <>
@@ -736,6 +745,11 @@ function Insumos() {
 
       {error && <Alert variant="danger" onClose={() => setError('')} dismissible>{error}</Alert>}
       {successMessage && <Alert variant="success" onClose={() => setSuccessMessage('')} dismissible>{successMessage}</Alert>}
+      {!podeEditar && (
+        <Alert variant="secondary">
+          Você está em modo somente leitura. Peça ao administrador a permissão de colaborador para criar, editar ou excluir.
+        </Alert>
+      )}
 
       <div className="page-lista-body">
       <Tabs activeKey={activeTab} onSelect={handleTabSelect} className="mb-2">
@@ -769,9 +783,11 @@ function Insumos() {
                 <div className="text-center py-4">
                   <FaBoxes size={48} className="text-muted mb-3" />
                   <p className="text-muted">Nenhum insumo encontrado</p>
-                  <Button onClick={() => setShowModal(true)} variant="outline-primary">
-                    Adicionar Primeiro Insumo
-                  </Button>
+                  {podeEditar && (
+                    <Button onClick={() => setShowModal(true)} variant="outline-primary">
+                      Adicionar Primeiro Insumo
+                    </Button>
+                  )}
                 </div>
               ) : (
                 <Table responsive hover>
@@ -797,7 +813,7 @@ function Insumos() {
                       <SortableTh columnKey="precoUnitario">Preço Unitário</SortableTh>
                       <SortableTh columnKey="empresa">Empresa</SortableTh>
                       <SortableTh columnKey="data">Data</SortableTh>
-                      {!deleteMode && <th>Ações</th>}
+                      {!deleteMode && podeEditar && <th>Ações</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -831,7 +847,7 @@ function Insumos() {
                         <td>R$ {insumo.precoUnitario.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
                         <td>{insumo.empresa || '-'}</td>
                         <td>{formatDateBR(getDataInsumoISO(insumo))}</td>
-                        {!deleteMode && (
+                        {!deleteMode && podeEditar && (
                           <td>
                             <Button
                               size="sm"
@@ -922,7 +938,7 @@ function Insumos() {
                             <td>
                               {adicionado ? (
                                 <Badge bg="success">Já adicionado</Badge>
-                              ) : (
+                              ) : podeEditar ? (
                                 <Button
                                   size="sm"
                                   variant="outline-primary"
@@ -932,6 +948,8 @@ function Insumos() {
                                   <FaPlus className="me-1" />
                                   Adicionar
                                 </Button>
+                              ) : (
+                                <span className="text-muted">—</span>
                               )}
                             </td>
                           </tr>

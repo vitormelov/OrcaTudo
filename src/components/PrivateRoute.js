@@ -1,11 +1,33 @@
-import React from 'react';
-import { Navigate } from 'react-router-dom';
+import React, { useEffect } from 'react';
+import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { useEmpresa } from '../contexts/EmpresaContext';
 
-function PrivateRoute({ children }) {
-  const { currentUser } = useAuth();
+function PrivateRoute({ children, adminOnly = false, requireEmpresa = true }) {
+  const { currentUser, isAdmin, perfil, logout } = useAuth();
+  const { empresaId } = useEmpresa();
+  const location = useLocation();
+  const bloqueado = Boolean(perfil?.bloqueado && !isAdmin);
 
-  return currentUser ? children : <Navigate to="/login" />;
+  useEffect(() => {
+    if (bloqueado) {
+      logout();
+    }
+  }, [bloqueado, logout]);
+
+  if (!currentUser || bloqueado) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (adminOnly && !isAdmin) {
+    return <Navigate to="/" replace />;
+  }
+
+  if (requireEmpresa && !empresaId && location.pathname !== '/empresas') {
+    return <Navigate to="/empresas" replace />;
+  }
+
+  return children;
 }
 
 export default PrivateRoute;

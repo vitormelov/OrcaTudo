@@ -4,56 +4,64 @@
       "collectionGroup": "insumos",
       "queryScope": "COLLECTION",
       "fields": [
-        {
-          "fieldPath": "userId",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "nome",
-          "order": "ASCENDING"
-        }
+        { "fieldPath": "empresaId", "order": "ASCENDING" },
+        { "fieldPath": "nome", "order": "ASCENDING" }
       ]
     },
     {
       "collectionGroup": "composicoes",
       "queryScope": "COLLECTION",
       "fields": [
-        {
-          "fieldPath": "userId",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "nome",
-          "order": "ASCENDING"
-        }
+        { "fieldPath": "empresaId", "order": "ASCENDING" },
+        { "fieldPath": "nome", "order": "ASCENDING" }
       ]
     },
     {
       "collectionGroup": "composicoes",
       "queryScope": "COLLECTION",
       "fields": [
-        {
-          "fieldPath": "userId",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "insumoIds",
-          "arrayConfig": "CONTAINS"
-        }
+        { "fieldPath": "empresaId", "order": "ASCENDING" },
+        { "fieldPath": "insumoIds", "arrayConfig": "CONTAINS" }
       ]
     },
     {
       "collectionGroup": "orcamentos",
       "queryScope": "COLLECTION",
       "fields": [
-        {
-          "fieldPath": "userId",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "createdAt",
-          "order": "DESCENDING"
-        }
+        { "fieldPath": "empresaId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "insumos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "nome", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "composicoes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "nome", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "composicoes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "insumoIds", "arrayConfig": "CONTAINS" }
+      ]
+    },
+    {
+      "collectionGroup": "orcamentos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
     }
   ],

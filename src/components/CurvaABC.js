@@ -13,6 +13,7 @@ import {
 import { formatCurrency } from '../utils/formatters';
 import { collection, getDocs, query, where, getDoc, doc } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
+import { useEmpresa } from '../contexts/EmpresaContext';
 import { db } from '../firebase/config';
 import { useParams, useNavigate } from 'react-router-dom';
 
@@ -71,6 +72,7 @@ function classificarABC(itens) {
 
 const CurvaABC = () => {
   const { currentUser } = useAuth();
+  const { empresaId } = useEmpresa();
   const { id: orcamentoId } = useParams();
   const navigate = useNavigate();
   const [orcamentoNome, setOrcamentoNome] = useState('');
@@ -83,11 +85,11 @@ const CurvaABC = () => {
   const [resumoComposicoes, setResumoComposicoes] = useState(null);
 
   useEffect(() => {
-    if (orcamentoId && currentUser) {
+    if (orcamentoId && currentUser && empresaId) {
       calcularCurvasABC();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orcamentoId, currentUser]);
+  }, [orcamentoId, currentUser, empresaId]);
 
   const calcularCurvasABC = async () => {
     try {
@@ -102,7 +104,11 @@ const CurvaABC = () => {
       const orcamentoData = orcamentoSnapshot.data();
       setOrcamentoNome(orcamentoData.nome || '');
 
-      if (orcamentoData.userId !== currentUser.uid) {
+      if (orcamentoData.empresaId) {
+        if (orcamentoData.empresaId !== empresaId) {
+          throw new Error('Acesso negado a este orçamento');
+        }
+      } else if (orcamentoData.userId !== currentUser.uid) {
         throw new Error('Acesso negado a este orçamento');
       }
 
@@ -113,8 +119,8 @@ const CurvaABC = () => {
       }
 
       const [composicoesSnap, insumosSnap] = await Promise.all([
-        getDocs(query(collection(db, 'composicoes'), where('userId', '==', currentUser.uid))),
-        getDocs(query(collection(db, 'insumos'), where('userId', '==', currentUser.uid)))
+        getDocs(query(collection(db, 'composicoes'), where('empresaId', '==', empresaId))),
+        getDocs(query(collection(db, 'insumos'), where('empresaId', '==', empresaId)))
       ]);
 
       const catalogoComposicoes = composicoesSnap.docs.map((d) => ({ id: d.id, ...d.data() }));

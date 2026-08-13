@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Row, Col, Card, Button } from 'react-bootstrap';
+import { Row, Col, Card, Button, Alert } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useAuth } from '../contexts/AuthContext';
+import { useEmpresa } from '../contexts/EmpresaContext';
 import { 
   FaBoxes, 
   FaLayerGroup, 
@@ -16,6 +17,7 @@ import {
 
 function Dashboard() {
   const { currentUser } = useAuth();
+  const { empresaId, podeEditar } = useEmpresa();
   const [stats, setStats] = useState({
     insumos: 0,
     composicoes: 0,
@@ -28,15 +30,15 @@ function Dashboard() {
     const fetchStats = async () => {
       try {
         // Contar insumos
-        const insumosQuery = query(collection(db, 'insumos'), where('userId', '==', currentUser.uid));
+        const insumosQuery = query(collection(db, 'insumos'), where('empresaId', '==', empresaId));
         const insumosSnapshot = await getDocs(insumosQuery);
         
         // Contar composições
-        const composicoesQuery = query(collection(db, 'composicoes'), where('userId', '==', currentUser.uid));
+        const composicoesQuery = query(collection(db, 'composicoes'), where('empresaId', '==', empresaId));
         const composicoesSnapshot = await getDocs(composicoesQuery);
         
         // Contar orçamentos
-        const orcamentosQuery = query(collection(db, 'orcamentos'), where('userId', '==', currentUser.uid));
+        const orcamentosQuery = query(collection(db, 'orcamentos'), where('empresaId', '==', empresaId));
         const orcamentosSnapshot = await getDocs(orcamentosQuery);
         
         // Calcular valor total dos orçamentos (com BDI se aplicável)
@@ -69,10 +71,10 @@ function Dashboard() {
       }
     };
 
-    if (currentUser) {
+    if (currentUser && empresaId) {
       fetchStats();
     }
-  }, [currentUser]);
+  }, [currentUser, empresaId]);
 
   return (
     <div>
@@ -81,13 +83,20 @@ function Dashboard() {
           <h1>Dashboard</h1>
           <p className="text-muted">Bem-vindo ao sistema de orçamento de obra</p>
         </div>
-        <div>
-          <Button as={Link} to="/orcamentos" variant="primary" className="me-2">
-            <FaPlus className="me-2" />
-            Novo Orçamento
-          </Button>
-        </div>
+        {podeEditar && (
+          <div>
+            <Button as={Link} to="/orcamentos" variant="primary" className="me-2">
+              <FaPlus className="me-2" />
+              Novo Orçamento
+            </Button>
+          </div>
+        )}
       </div>
+      {!podeEditar && (
+        <Alert variant="secondary" className="mb-4">
+          Você está em modo somente leitura. Peça ao administrador a permissão de colaborador para criar, editar ou excluir.
+        </Alert>
+      )}
 
       {/* Cards de Estatísticas */}
       <Row className="mb-4">

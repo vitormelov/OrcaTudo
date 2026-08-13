@@ -4,6 +4,7 @@ import { formatCurrency } from '../utils/formatters';
 import { collection, getDocs, updateDoc, doc, query, where, getDoc, addDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useAuth } from '../contexts/AuthContext';
+import { useEmpresa } from '../contexts/EmpresaContext';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   migrarEapAntigo, stripUidsForSave, getCompsDoNo, calcularValorTotal, newId
@@ -47,6 +48,7 @@ function snapshotEditavel(orcamento, bdiConfig) {
 
 function OrcamentoEAP() {
   const { currentUser } = useAuth();
+  const { empresaId, podeEditar } = useEmpresa();
   const { id: orcamentoId } = useParams();
   const navigate = useNavigate();
 
@@ -76,9 +78,9 @@ function OrcamentoEAP() {
   const [bdiConfig, setBdiConfig] = useState({ lucro: 10, tributos: 8, financeiro: 2, garantias: 1 });
 
   useEffect(() => {
-    if (currentUser && orcamentoId) carregar();
+    if (currentUser && orcamentoId && empresaId) carregar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentUser, orcamentoId]);
+  }, [currentUser, orcamentoId, empresaId]);
 
   const carregar = async () => {
     try {
@@ -86,7 +88,12 @@ function OrcamentoEAP() {
       const snap = await getDoc(doc(db, 'orcamentos', orcamentoId));
       if (!snap.exists()) { setError('Orçamento não encontrado'); return; }
       const data = { id: snap.id, ...snap.data() };
-      if (data.userId !== currentUser.uid) { setError('Sem permissão para este orçamento'); return; }
+      if (data.empresaId) {
+        if (data.empresaId !== empresaId) { setError('Sem permissão para este orçamento'); return; }
+      } else if (data.userId !== currentUser.uid) {
+        setError('Sem permissão para este orçamento');
+        return;
+      }
       // Normalizar orçamentos antigos sem revisão
       if (!data.obraId) data.obraId = data.id;
       if (!Number.isFinite(Number(data.revisao))) data.revisao = 0;
@@ -105,8 +112,8 @@ function OrcamentoEAP() {
       });
       setAbertos(abertosInit);
       const [compsSnap, insumosSnap] = await Promise.all([
-        getDocs(query(collection(db, 'composicoes'), where('userId', '==', currentUser.uid))),
-        getDocs(query(collection(db, 'insumos'), where('userId', '==', currentUser.uid)))
+        getDocs(query(collection(db, 'composicoes'), where('empresaId', '==', empresaId))),
+        getDocs(query(collection(db, 'insumos'), where('empresaId', '==', empresaId)))
       ]);
       setCatalogoComposicoes(
         compsSnap.docs.map((d) => ({ id: d.id, ...d.data() }))
@@ -121,13 +128,13 @@ function OrcamentoEAP() {
 
   const toggleAberto = (id) => setAbertos((prev) => ({ ...prev, [id]: !prev[id] }));
 
-  const somenteLeitura = Boolean(orcamento?.revisaoTravada);
+  const somenteLeitura = Boolean(orcamento?.revisaoTravada) || !podeEditar;
 
   const temAlteracoesNaoSalvas = useMemo(() => {
-    if (!orcamento || orcamento.revisaoTravada) return false;
+    if (!orcamento || orcamento.revisaoTravada || !podeEditar) return false;
     const atual = snapshotEditavel(orcamento, orcamento.bdiConfig ? bdiConfig : null);
     return atual !== snapshotSalvoRef.current;
-  }, [orcamento, bdiConfig]);
+  }, [orcamento, bdiConfig, podeEditar]);
 
   const confirmarSaida = useCallback(() => {
     if (!temAlteracoesNaoSalvas) return true;
@@ -426,8 +433,12 @@ function OrcamentoEAP() {
 
   const salvarEAP = async () => {
     if (!orcamento) return;
-    if (somenteLeitura) {
+    if (orcamento.revisaoTravada) {
       setError('Esta revisão está travada. Crie uma nova revisão para editar.');
+      return;
+    }
+    if (!podeEditar) {
+      setError('Você não tem permissão para editar este orçamento.');
       return;
     }
     setLoading(true);
@@ -461,7 +472,7 @@ function OrcamentoEAP() {
   };
 
   const handleNovaRevisao = async () => {
-    if (!orcamento || somenteLeitura) return;
+    if (!orcamento || !podeEditar || orcamento.revisaoTravada) return;
     if (temAlteracoesNaoSalvas) {
       const seguir = window.confirm(
         'Há alterações não salvas. Ao criar a nova revisão, o estado atual será salvo antes de travar.\n\nDeseja continuar?'
@@ -496,7 +507,7 @@ function OrcamentoEAP() {
       });
 
       const siblingsSnap = await getDocs(
-        query(collection(db, 'orcamentos'), where('userId', '==', currentUser.uid))
+        query(collection(db, 'orcamentos'), where('empresaId', '==', empresaId))
       );
       let maxRev = revisaoAtual;
       siblingsSnap.docs.forEach((d) => {
@@ -514,6 +525,7 @@ function OrcamentoEAP() {
         endereco: orcamento.endereco || '',
         data: orcamento.data || new Date().toISOString().split('T')[0],
         userId: currentUser.uid,
+        empresaId,
         createdAt: new Date(),
         valorTotal: calcularValorTotal(composicoes),
         totaisPorCategoria,
@@ -627,10 +639,17 @@ function OrcamentoEAP() {
 
   return (
     <div>
-      {somenteLeitura && (
+      {orcamento.revisaoTravada && (
         <Alert variant="warning">
           Revisão <strong>{formatRevisao(getRevisao(orcamento))}</strong> travada (somente leitura).
-          Crie uma nova revisão na lista de orçamentos ou pelo botão abaixo para editar.
+          {podeEditar
+            ? ' Crie uma nova revisão na lista de orçamentos para editar.'
+            : ''}
+        </Alert>
+      )}
+      {!podeEditar && !orcamento.revisaoTravada && (
+        <Alert variant="secondary">
+          Você está em modo somente leitura. Peça ao administrador a permissão de colaborador para editar.
         </Alert>
       )}
       {error && <Alert variant="danger" dismissible onClose={() => setError('')}>{error}</Alert>}

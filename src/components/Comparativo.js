@@ -13,6 +13,7 @@ import {
 import { collection, getDocs, query, where, doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useAuth } from '../contexts/AuthContext';
+import { useEmpresa } from '../contexts/EmpresaContext';
 import { useNavigate } from 'react-router-dom';
 import {
   FaArrowLeft,
@@ -36,6 +37,7 @@ import {
 
 function Comparativo() {
   const { currentUser } = useAuth();
+  const { empresaId } = useEmpresa();
   const navigate = useNavigate();
   const [orcamentos, setOrcamentos] = useState([]);
   const [insumos, setInsumos] = useState([]);
@@ -49,15 +51,15 @@ function Comparativo() {
   const [filtroComp, setFiltroComp] = useState('mudancas');
 
   useEffect(() => {
-    if (currentUser) carregarBase();
+    if (currentUser && empresaId) carregarBase();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentUser]);
+  }, [currentUser, empresaId]);
 
   const carregarBase = async () => {
     try {
       const [orcSnap, insSnap] = await Promise.all([
-        getDocs(query(collection(db, 'orcamentos'), where('userId', '==', currentUser.uid))),
-        getDocs(query(collection(db, 'insumos'), where('userId', '==', currentUser.uid)))
+        getDocs(query(collection(db, 'orcamentos'), where('empresaId', '==', empresaId))),
+        getDocs(query(collection(db, 'insumos'), where('empresaId', '==', empresaId)))
       ]);
       setOrcamentos(orcSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
       setInsumos(insSnap.docs.map((d) => ({ id: d.id, ...d.data() })));

@@ -1,8 +1,8 @@
-import { initializeApp } from 'firebase/app';
+import { initializeApp, getApps } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 
-const firebaseConfig = {
+export const firebaseConfig = {
   apiKey: "AIzaSyBJwTlYAMSrnAXFqKy11b9z819SR5uoV6M",
   authDomain: "orcatudo-61cce.firebaseapp.com",
   projectId: "orcatudo-61cce",
@@ -15,5 +15,11 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
+
+export function getSecondaryAuth() {
+  const existing = getApps().find((a) => a.name === 'Secondary');
+  const secondary = existing || initializeApp(firebaseConfig, 'Secondary');
+  return getAuth(secondary);
+}
 
 export default app;

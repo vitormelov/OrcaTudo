@@ -684,7 +684,7 @@ export default function EapWorkspace(props) {
               <Badge bg={somenteLeitura ? 'secondary' : 'primary'} className="me-1">
                 Rev. {formatRevisao(getRevisao(orcamento))}
               </Badge>
-              {somenteLeitura && <span className="text-muted small">travada</span>}
+              {orcamento?.revisaoTravada && <span className="text-muted small">travada</span>}
             </span>
           </div>
           <div className="eap-meta-item">

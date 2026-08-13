@@ -28,10 +28,12 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useAuth } from '../contexts/AuthContext';
+import { useEmpresa } from '../contexts/EmpresaContext';
 import { FaPlus, FaEdit, FaTrash, FaSearch, FaLayerGroup, FaBoxes, FaDatabase, FaTimes, FaCheck, FaCopy } from 'react-icons/fa';
 
 function Composicoes() {
   const { currentUser } = useAuth();
+  const { empresaId, podeEditar } = useEmpresa();
   const [composicoes, setComposicoes] = useState([]);
   const [insumos, setInsumos] = useState([]);
   const [showModal, setShowModal] = useState(false);
@@ -97,11 +99,11 @@ function Composicoes() {
   ];
 
   useEffect(() => {
-    if (currentUser) {
+    if (currentUser && empresaId) {
       fetchComposicoes();
       fetchInsumos();
     }
-  }, [currentUser]);
+  }, [currentUser, empresaId]);
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -118,11 +120,11 @@ function Composicoes() {
 
   const fetchComposicoes = async () => {
     try {
-      if (!currentUser) return;
+      if (!currentUser || !empresaId) return;
       setError('');
       const q = query(
         collection(db, 'composicoes'), 
-        where('userId', '==', currentUser.uid)
+        where('empresaId', '==', empresaId)
       );
       const querySnapshot = await getDocs(q);
       const composicoesData = querySnapshot.docs.map(doc => ({
@@ -139,10 +141,10 @@ function Composicoes() {
 
   const fetchInsumos = async () => {
     try {
-      if (!currentUser) return;
+      if (!currentUser || !empresaId) return;
       const q = query(
         collection(db, 'insumos'), 
-        where('userId', '==', currentUser.uid)
+        where('empresaId', '==', empresaId)
       );
       const querySnapshot = await getDocs(q);
       const insumosData = querySnapshot.docs.map(doc => ({
@@ -261,6 +263,7 @@ function Composicoes() {
           empresa: 'SEINFRA',
           fonte: 'SEINFRA',
           userId: currentUser.uid,
+          empresaId,
           createdAt: agora,
           updatedAt: agora
         };
@@ -293,7 +296,7 @@ function Composicoes() {
   };
 
   const confirmarAdicionarSeinfra = async () => {
-    if (!seinfraItem || !currentUser) return;
+    if (!seinfraItem || !currentUser || !podeEditar) return;
     setAddingCodigo(seinfraItem.codigo);
     setLoading(true);
     setError('');
@@ -349,6 +352,7 @@ function Composicoes() {
         empresa: 'SEINFRA',
         fonte: 'SEINFRA',
         userId: currentUser.uid,
+        empresaId,
         createdAt: new Date()
       });
 
@@ -406,6 +410,10 @@ function Composicoes() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!podeEditar) {
+      setError('Você não tem permissão para criar ou editar composições.');
+      return;
+    }
     setLoading(true);
     setError('');
 
@@ -461,6 +469,7 @@ function Composicoes() {
         insumoIds: (formData.insumos || []).map((i) => i.insumoId),
         valorTotal: calcularValorTotal(),
         userId: currentUser.uid,
+        empresaId,
         createdAt: editingComposicao ? editingComposicao.createdAt : new Date()
       };
 
@@ -549,6 +558,7 @@ function Composicoes() {
   };
 
   const handleBulkDelete = async () => {
+    if (!podeEditar) return;
     if (selectedIds.length === 0) {
       setError('Selecione ao menos uma composição para excluir.');
       return;
@@ -560,7 +570,7 @@ function Composicoes() {
 
       const qOrc = query(
         collection(db, 'orcamentos'),
-        where('userId', '==', currentUser.uid)
+        where('empresaId', '==', empresaId)
       );
       const orcSnap = await getDocs(qOrc);
       const usoPorComposicao = new Map();
@@ -706,7 +716,7 @@ function Composicoes() {
           <h1><FaLayerGroup className="me-2" />Composições</h1>
           <p className="text-muted mb-0">Crie composições combinando insumos para serviços específicos</p>
         </div>
-        {activeTab === 'minhas' && (
+        {activeTab === 'minhas' && podeEditar && (
           <div className="d-flex gap-2">
             {deleteMode ? (
               <>
@@ -749,6 +759,11 @@ function Composicoes() {
 
       {error && <Alert variant="danger" onClose={() => setError('')} dismissible>{error}</Alert>}
       {successMessage && <Alert variant="success" onClose={() => setSuccessMessage('')} dismissible>{successMessage}</Alert>}
+      {!podeEditar && (
+        <Alert variant="secondary">
+          Você está em modo somente leitura. Peça ao administrador a permissão de colaborador para criar, editar ou excluir.
+        </Alert>
+      )}
 
       <div className="page-lista-body">
       <Tabs activeKey={activeTab} onSelect={handleTabSelect} className="mb-2">
@@ -782,9 +797,11 @@ function Composicoes() {
                 <div className="text-center py-4">
                   <FaLayerGroup size={48} className="text-muted mb-3" />
                   <p className="text-muted">Nenhuma composição encontrada</p>
-                  <Button onClick={() => setShowModal(true)} variant="outline-primary">
-                    Criar Primeira Composição
-                  </Button>
+                  {podeEditar && (
+                    <Button onClick={() => setShowModal(true)} variant="outline-primary">
+                      Criar Primeira Composição
+                    </Button>
+                  )}
                 </div>
               ) : (
                 <Table responsive hover>
@@ -808,7 +825,7 @@ function Composicoes() {
                       <th style={{width: '15%'}}>Unidade</th>
                       <th style={{width: '15%'}}>Insumos</th>
                       <th style={{width: '15%'}}>Valor Total</th>
-                      <th style={{width: '12%'}}>Ações</th>
+                      {podeEditar && !deleteMode && <th style={{width: '12%'}}>Ações</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -835,7 +852,7 @@ function Composicoes() {
                         <td style={{width: '15%'}}>{composicao.unidade}</td>
                         <td style={{width: '15%'}}>{composicao.insumos?.length || 0} insumos</td>
                         <td style={{width: '15%'}}>R$ {composicao.valorTotal?.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) || '0,00'}</td>
-                        {!deleteMode && (
+                        {!deleteMode && podeEditar && (
                           <td style={{width: '12%'}}>
                             <Button
                               size="sm"
@@ -938,7 +955,7 @@ function Composicoes() {
                             <td>
                               {adicionada ? (
                                 <Badge bg="success">Já adicionada</Badge>
-                              ) : (
+                              ) : podeEditar ? (
                                 <Button
                                   size="sm"
                                   variant="outline-primary"
@@ -948,6 +965,8 @@ function Composicoes() {
                                   <FaPlus className="me-1" />
                                   Adicionar
                                 </Button>
+                              ) : (
+                                <span className="text-muted">—</span>
                               )}
                             </td>
                           </tr>
