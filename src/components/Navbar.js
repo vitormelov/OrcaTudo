@@ -4,9 +4,10 @@ import { Navbar, Nav, Container, Dropdown } from 'react-bootstrap';
 import { useAuth } from '../contexts/AuthContext';
 import { useEmpresa } from '../contexts/EmpresaContext';
 import {
-  FaCalculator, FaBoxes, FaLayerGroup, FaFileInvoiceDollar,
+  FaHome, FaBoxes, FaLayerGroup, FaFileInvoiceDollar,
   FaBalanceScale, FaUser, FaSignOutAlt, FaBuilding, FaUsersCog
 } from 'react-icons/fa';
+import Logo from './Logo';
 
 function NavigationBar() {
   const { currentUser, logout, isAdmin } = useAuth();
@@ -36,8 +37,7 @@ function NavigationBar() {
     <Navbar expand="lg" className="mb-3 app-navbar" variant="dark">
       <Container>
         <Navbar.Brand as={Link} to={naSelecao ? '/empresas' : '/'} className="d-flex align-items-center">
-          <FaCalculator className="me-2" />
-          Orçamento de Obra
+          <Logo height={44} />
         </Navbar.Brand>
 
         <Navbar.Toggle aria-controls="basic-navbar-nav" />
@@ -45,7 +45,7 @@ function NavigationBar() {
           {!naSelecao && (
             <Nav className="me-auto">
               <Nav.Link as={Link} to="/" className="d-flex align-items-center">
-                <FaCalculator className="me-1" />
+                <FaHome className="me-1" />
                 Dashboard
               </Nav.Link>
               <Nav.Link as={Link} to="/insumos" className="d-flex align-items-center">

@@ -108,10 +108,27 @@ label,
   background-color: var(--color-primary) !important;
 }
 
+/* Mesma largura do conteúdo da página (logo alinhada com títulos) */
+.app-navbar > .container {
+  max-width: 85%;
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: 15px;
+  padding-right: 15px;
+}
+
+.app-logo-img {
+  display: block;
+  width: auto;
+  object-fit: contain;
+}
+
 .app-navbar .navbar-brand {
   font-weight: var(--font-semibold);
   font-size: var(--text-lg);
   color: #ffffff !important;
+  margin-right: 1rem;
+  padding-left: 0;
 }
 
 .app-navbar .nav-link {
@@ -430,11 +447,31 @@ a:hover {
 
 /* ——— Dashboard ——— */
 .dashboard-card {
-  transition: transform 0.2s;
+  transition: none;
 }
 
 .dashboard-card:hover {
-  transform: translateY(-2px);
+  transform: none;
+}
+
+.dashboard-empresa-linha {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.25rem;
+  margin-bottom: 1rem;
+}
+
+.dashboard-empresa-linha:last-of-type {
+  margin-bottom: 0;
+}
+
+.dashboard-status-item {
+  display: flex;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  background: var(--color-background);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
 }
 
 .stats-card {

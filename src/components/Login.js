@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, Form, Button, Alert, Container, Row, Col } from 'react-bootstrap';
 import { useAuth } from '../contexts/AuthContext';
-import { FaSignInAlt, FaCalculator } from 'react-icons/fa';
+import { FaSignInAlt } from 'react-icons/fa';
+import Logo from './Logo';
 
 function Login() {
   const [email, setEmail] = useState('');
@@ -42,9 +43,8 @@ function Login() {
         <Row className="h-100 justify-content-center align-items-center">
           <Col xs={12} sm={10} md={8} lg={6} xl={4}>
             <div className="text-center mb-4">
-              <FaCalculator size={64} className="text-primary mb-3" />
-              <h1 className="text-white fw-bold mb-2">Orçamento de Obra</h1>
-              <p className="text-light fs-5">Sistema de gestão de orçamentos</p>
+              <Logo height={160} className="mb-3 mx-auto" />
+              <p className="text-light fs-5 mb-0">Sistema de gestão de orçamentos</p>
             </div>
 
             <Card className="login-card shadow-lg">
