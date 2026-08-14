@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import React, { useMemo, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Container,
   Row,
@@ -12,7 +12,14 @@ import {
 } from 'react-bootstrap';
 import { FaCheckCircle, FaLock, FaArrowLeft } from 'react-icons/fa';
 import Logo from './Logo';
-import { PLANO, formatarPrecoPlano } from '../constants/plano';
+import {
+  getPlano,
+  formatarPrecoPlano,
+  percentualDesconto,
+  precoMensalAnual,
+  precoAnualTotal,
+  OFERTA
+} from '../constants/plano';
 
 const ESTADOS = [
   'AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA',
@@ -39,9 +46,16 @@ const FORM_INICIAL = {
 
 function Assinar() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const plano = useMemo(() => getPlano(searchParams.get('plano')), [searchParams]);
+  const ciclo = searchParams.get('ciclo') === 'mensal' ? 'mensal' : 'anual';
+  const isAnual = ciclo === 'anual';
   const [form, setForm] = useState(FORM_INICIAL);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const valorCobrado = isAnual ? precoMensalAnual(plano) : plano.precoMensal;
+  const valorCheioRef = isAnual ? plano.precoMensal : plano.precoCheio;
+  const pct = isAnual ? OFERTA.descontoAnualPct : percentualDesconto(plano);
 
   function atualizar(campo, valor) {
     setForm((prev) => ({ ...prev, [campo]: valor }));
@@ -87,15 +101,16 @@ function Assinar() {
 
     setLoading(true);
 
-    // Fluxo visual: dados da conta/endereço ficam prontos para a integração
-    // real com Mercado Pago (Checkout Pro / Assinaturas). Cartão NUNCA é
-    // coletado aqui — o pagamento ocorrerá na página segura do Mercado Pago.
     const pendente = {
       ...form,
       senha: undefined,
       confirmarSenha: undefined,
-      plano: PLANO.nome,
-      valor: PLANO.precoMensal,
+      planoId: plano.id,
+      plano: plano.nome,
+      ciclo,
+      valorCheio: valorCheioRef,
+      valor: valorCobrado,
+      valorAnualTotal: isAnual ? precoAnualTotal(plano) : null,
       criadoEm: new Date().toISOString()
     };
     try {
@@ -110,7 +125,11 @@ function Assinar() {
       state: {
         email: form.email,
         nome: form.nome,
-        nomeEmpresa: form.nomeEmpresa
+        nomeEmpresa: form.nomeEmpresa,
+        planoId: plano.id,
+        planoNome: plano.nome,
+        ciclo,
+        valor: valorCobrado
       }
     });
   }
@@ -145,14 +164,25 @@ function Assinar() {
           <Col lg={4}>
             <Card className="landing-pricing-card border-0 shadow sticky-lg-top" style={{ top: 24 }}>
               <Card.Body className="p-4">
-                <span className="landing-plan-badge">Assinatura</span>
-                <h1 className="h4 text-dark mt-2 mb-1">{PLANO.nome}</h1>
-                <div className="landing-price mb-1">{formatarPrecoPlano()}</div>
-                <p className="text-muted small mb-4">Cobrança mensal · cancele quando quiser</p>
+                <div className="d-flex justify-content-between align-items-start">
+                  <span className="landing-plan-badge">{OFERTA.selo}</span>
+                  {pct > 0 && <span className="landing-discount-pill">-{pct}%</span>}
+                </div>
+                <h1 className="h4 text-dark mt-2 mb-1">{plano.nome}</h1>
+                <p className="text-muted small mb-2">
+                  {plano.usuarios} · cobrança {isAnual ? 'anual' : 'mensal'}
+                </p>
+                <div className="landing-price-old">De {formatarPrecoPlano(valorCheioRef)}</div>
+                <div className="landing-price mb-1">{formatarPrecoPlano(valorCobrado)}</div>
+                <p className="text-muted small mb-3">
+                  {isAnual
+                    ? `equivalente mensal · total ${formatarPrecoPlano(precoAnualTotal(plano))}/ano`
+                    : 'por mês na oferta do mês'}
+                </p>
 
                 <h2 className="h6 text-uppercase text-muted mb-2">O que você leva</h2>
                 <ListGroup variant="flush" className="mb-3">
-                  {[...PLANO.modulos.slice(0, 4), ...PLANO.beneficios.slice(0, 2)].map((item) => (
+                  {(plano.recursos || []).slice(0, 6).map((item) => (
                     <ListGroup.Item
                       key={item}
                       className="px-0 d-flex align-items-start gap-2 border-0 bg-transparent"
@@ -352,7 +382,16 @@ function Assinar() {
                     id="termos"
                     checked={form.aceitouTermos}
                     onChange={(e) => atualizar('aceitouTermos', e.target.checked)}
-                    label={`Concordo em assinar o plano ${PLANO.nome} por ${formatarPrecoPlano()}/${PLANO.ciclo}.`}
+                    label={
+                      <>
+                        Concordo em assinar o plano <strong>{plano.nome}</strong> por{' '}
+                        <strong>{formatarPrecoPlano(valorCobrado)}/mês</strong>
+                        {isAnual
+                          ? ` (cobrança anual de ${formatarPrecoPlano(precoAnualTotal(plano))})`
+                          : ` (de ${formatarPrecoPlano(plano.precoCheio)})`}
+                        .
+                      </>
+                    }
                     required
                   />
 
@@ -365,7 +404,7 @@ function Assinar() {
                   >
                     {loading
                       ? 'Preparando checkout seguro...'
-                      : `Continuar para o pagamento · ${formatarPrecoPlano()}/${PLANO.ciclo}`}
+                      : `Continuar para o pagamento · ${formatarPrecoPlano(valorCobrado)}/mês`}
                   </Button>
                 </Form>
               </Card.Body>

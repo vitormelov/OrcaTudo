@@ -1024,6 +1024,12 @@ a:hover {
   border-radius: 1rem;
 }
 
+.landing-pricing-card--featured {
+  transform: translateY(-4px);
+  box-shadow: 0 1rem 2.5rem rgba(0, 0, 0, 0.28) !important;
+  outline: 2px solid var(--color-accent);
+}
+
 .landing-plan-badge {
   display: inline-block;
   background: rgba(242, 184, 75, 0.18);
@@ -1034,11 +1040,151 @@ a:hover {
   border-radius: 999px;
 }
 
+.landing-plan-badge--hot {
+  background: rgba(63, 166, 107, 0.18);
+  color: #1f6b3f;
+}
+
 .landing-price {
   font-size: 2rem;
   font-weight: var(--font-bold);
   color: var(--color-primary);
   line-height: 1.1;
+}
+
+.landing-price-old {
+  display: inline-block;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  text-decoration: line-through;
+}
+
+.landing-price-note {
+  color: var(--color-text-secondary);
+  font-size: var(--text-xs);
+  margin-bottom: 0;
+}
+
+.landing-discount-pill {
+  background: #d9534f;
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.3rem 0.55rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.landing-annual-box {
+  background: rgba(63, 166, 107, 0.08);
+  border: 1px solid rgba(63, 166, 107, 0.25);
+  border-radius: 0.65rem;
+  padding: 0.75rem 0.9rem;
+}
+
+.landing-annual-badge {
+  font-size: 0.65rem;
+}
+
+.landing-feature-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.landing-feature-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  margin-bottom: 0.55rem;
+}
+
+.landing-offer-banner {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  padding: 0.4rem 0.9rem;
+  font-size: var(--text-sm);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.landing-billing-toggle {
+  position: relative;
+  display: inline-grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+  gap: 0;
+  padding: 0.25rem;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  min-width: 280px;
+}
+
+.landing-billing-option {
+  position: relative;
+  z-index: 1;
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.75);
+  font-size: var(--text-sm);
+  font-weight: var(--font-semibold);
+  padding: 0.55rem 1rem;
+  border-radius: 999px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  transition: color 0.2s ease;
+}
+
+.landing-billing-option.is-active {
+  color: var(--color-primary);
+}
+
+.landing-billing-save {
+  font-size: 0.65rem;
+  font-weight: 700;
+  background: rgba(63, 166, 107, 0.95);
+  color: #fff;
+  padding: 0.12rem 0.4rem;
+  border-radius: 999px;
+}
+
+.landing-billing-option.is-active .landing-billing-save {
+  background: var(--color-success);
+}
+
+.landing-billing-slider {
+  position: absolute;
+  top: 0.25rem;
+  bottom: 0.25rem;
+  left: 0.25rem;
+  width: calc(50% - 0.25rem);
+  background: #fff;
+  border-radius: 999px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  transition: transform 0.25s ease;
+  z-index: 0;
+}
+
+.landing-billing-slider.is-mensal {
+  transform: translateX(0);
+}
+
+.landing-billing-slider.is-anual {
+  transform: translateX(100%);
+}
+
+.landing-pricing-section {
+  padding-top: 0.5rem;
 }
 
 .landing-footer {
@@ -1051,6 +1197,12 @@ a:hover {
 
 .landing-checkout .form-label {
   color: var(--color-text-secondary);
+}
+
+@media (max-width: 991.98px) {
+  .landing-pricing-card--featured {
+    transform: none;
+  }
 }
 
 /* Accent utilitário (uso estratégico) */

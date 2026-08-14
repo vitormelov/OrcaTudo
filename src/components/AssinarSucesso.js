@@ -3,13 +3,17 @@ import { Link, useLocation } from 'react-router-dom';
 import { Container, Card, Button, Alert } from 'react-bootstrap';
 import { FaCheckCircle, FaLock } from 'react-icons/fa';
 import Logo from './Logo';
-import { formatarPrecoPlano, PLANO } from '../constants/plano';
+import { formatarPrecoPlano, getPlano, precoMensalAnual } from '../constants/plano';
 
 function AssinarSucesso() {
   const location = useLocation();
   const email = location.state?.email;
   const nome = location.state?.nome;
   const nomeEmpresa = location.state?.nomeEmpresa;
+  const plano = getPlano(location.state?.planoId);
+  const ciclo = location.state?.ciclo === 'mensal' ? 'mensal' : 'anual';
+  const valor = location.state?.valor ?? (ciclo === 'anual' ? precoMensalAnual(plano) : plano.precoMensal);
+  const planoNome = location.state?.planoNome || plano.nome;
 
   return (
     <div className="landing-page landing-checkout">
@@ -34,7 +38,8 @@ function AssinarSucesso() {
             <p className="text-muted mb-4">
               {nome ? `Obrigado, ${nome}. ` : ''}
               Registramos seu interesse no plano{' '}
-              <strong>{PLANO.nome}</strong> ({formatarPrecoPlano()}/{PLANO.ciclo})
+              <strong>{planoNome}</strong> ({formatarPrecoPlano(valor)}/mês
+              {ciclo === 'anual' ? ', cobrança anual' : ''})
               {nomeEmpresa ? ` para ${nomeEmpresa}` : ''}.
             </p>
 
