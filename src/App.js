@@ -6,6 +6,9 @@ import './styles/design-tokens.css';
 import './App.css';
 
 import Navbar from './components/Navbar';
+import Home from './components/Home';
+import Assinar from './components/Assinar';
+import AssinarSucesso from './components/AssinarSucesso';
 import Dashboard from './components/Dashboard';
 import Insumos from './components/Insumos';
 import Composicoes from './components/Composicoes';
@@ -20,6 +23,10 @@ import { AuthProvider } from './contexts/AuthContext';
 import { EmpresaProvider } from './contexts/EmpresaContext';
 import PrivateRoute from './components/PrivateRoute';
 
+function AppShell({ children }) {
+  return <Container className="mt-4">{children}</Container>;
+}
+
 function App() {
   return (
     <AuthProvider>
@@ -27,56 +34,75 @@ function App() {
         <EmpresaProvider>
           <div className="App">
             <Navbar />
-            <Container className="mt-4">
-              <Routes>
-                <Route path="/login" element={<Login />} />
-                <Route path="/empresas" element={
-                  <PrivateRoute requireEmpresa={false}>
+            <Routes>
+              <Route path="/" element={<Home />} />
+              <Route path="/assinar" element={<Assinar />} />
+              <Route path="/assinar/sucesso" element={<AssinarSucesso />} />
+              <Route path="/login" element={<Login />} />
+              <Route path="/empresas" element={
+                <PrivateRoute requireEmpresa={false}>
+                  <AppShell>
                     <SelecaoEmpresa />
-                  </PrivateRoute>
-                } />
-                <Route path="/admin" element={
-                  <PrivateRoute adminOnly requireEmpresa={false}>
+                  </AppShell>
+                </PrivateRoute>
+              } />
+              <Route path="/admin" element={
+                <PrivateRoute adminOnly requireEmpresa={false}>
+                  <AppShell>
                     <AdminUsuarios />
-                  </PrivateRoute>
-                } />
-                <Route path="/" element={
-                  <PrivateRoute>
+                  </AppShell>
+                </PrivateRoute>
+              } />
+              <Route path="/app" element={
+                <PrivateRoute>
+                  <AppShell>
                     <Dashboard />
-                  </PrivateRoute>
-                } />
-                <Route path="/insumos" element={
-                  <PrivateRoute>
+                  </AppShell>
+                </PrivateRoute>
+              } />
+              <Route path="/insumos" element={
+                <PrivateRoute>
+                  <AppShell>
                     <Insumos />
-                  </PrivateRoute>
-                } />
-                <Route path="/composicoes" element={
-                  <PrivateRoute>
+                  </AppShell>
+                </PrivateRoute>
+              } />
+              <Route path="/composicoes" element={
+                <PrivateRoute>
+                  <AppShell>
                     <Composicoes />
-                  </PrivateRoute>
-                } />
-                <Route path="/orcamentos" element={
-                  <PrivateRoute>
+                  </AppShell>
+                </PrivateRoute>
+              } />
+              <Route path="/orcamentos" element={
+                <PrivateRoute>
+                  <AppShell>
                     <Orcamentos />
-                  </PrivateRoute>
-                } />
-                <Route path="/orcamentos/:id/eap" element={
-                  <PrivateRoute>
+                  </AppShell>
+                </PrivateRoute>
+              } />
+              <Route path="/orcamentos/:id/eap" element={
+                <PrivateRoute>
+                  <AppShell>
                     <OrcamentoEAP />
-                  </PrivateRoute>
-                } />
-                <Route path="/orcamentos/:id/curva-abc" element={
-                  <PrivateRoute>
+                  </AppShell>
+                </PrivateRoute>
+              } />
+              <Route path="/orcamentos/:id/curva-abc" element={
+                <PrivateRoute>
+                  <AppShell>
                     <CurvaABC />
-                  </PrivateRoute>
-                } />
-                <Route path="/comparativo" element={
-                  <PrivateRoute>
+                  </AppShell>
+                </PrivateRoute>
+              } />
+              <Route path="/comparativo" element={
+                <PrivateRoute>
+                  <AppShell>
                     <Comparativo />
-                  </PrivateRoute>
-                } />
-              </Routes>
-            </Container>
+                  </AppShell>
+                </PrivateRoute>
+              } />
+            </Routes>
           </div>
         </EmpresaProvider>
       </Router>

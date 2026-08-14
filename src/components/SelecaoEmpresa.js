@@ -57,7 +57,7 @@ function SelecaoEmpresa() {
     setError('');
     try {
       await selecionarEmpresa(empresaId, nome);
-      navigate('/');
+      navigate('/app');
     } catch (e) {
       console.error(e);
       setError(e.message || 'Não foi possível entrar na empresa.');

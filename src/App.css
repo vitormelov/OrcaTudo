@@ -446,6 +446,19 @@ a:hover {
 }
 
 /* ——— Dashboard ——— */
+/* Alinha com os 5 cards iguais do topo: 3/5 e 2/5 */
+@media (min-width: 992px) {
+  .dashboard-col-span-3 {
+    flex: 0 0 60%;
+    max-width: 60%;
+  }
+
+  .dashboard-col-span-2 {
+    flex: 0 0 40%;
+    max-width: 40%;
+  }
+}
+
 .dashboard-card {
   transition: none;
 }
@@ -967,6 +980,77 @@ a:hover {
 .comparativo-page .btn-lg {
   padding: 0.75rem 2rem;
   font-weight: var(--font-semibold);
+}
+
+/* ——— Landing / assinatura ——— */
+.landing-page {
+  min-height: 100vh;
+  background: linear-gradient(160deg, #0f2133 0%, #17324D 45%, #1f4a66 100%);
+  color: #fff;
+}
+
+.landing-header {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.landing-hero {
+  padding: 3.5rem 0 4rem;
+}
+
+.landing-eyebrow {
+  color: var(--color-accent);
+  font-size: var(--text-sm);
+  font-weight: var(--font-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.landing-title {
+  color: #fff;
+  font-size: clamp(1.75rem, 4vw, 2.5rem);
+  font-weight: var(--font-bold);
+  line-height: 1.2;
+}
+
+.landing-subtitle {
+  color: rgba(255, 255, 255, 0.78);
+  font-size: var(--text-lg);
+  line-height: 1.55;
+  max-width: 34rem;
+}
+
+.landing-pricing-card {
+  background: var(--color-surface);
+  border-radius: 1rem;
+}
+
+.landing-plan-badge {
+  display: inline-block;
+  background: rgba(242, 184, 75, 0.18);
+  color: #9a6b10;
+  font-size: var(--text-xs);
+  font-weight: var(--font-semibold);
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+}
+
+.landing-price {
+  font-size: 2rem;
+  font-weight: var(--font-bold);
+  color: var(--color-primary);
+  line-height: 1.1;
+}
+
+.landing-footer {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.landing-checkout .landing-header {
+  margin-bottom: 0;
+}
+
+.landing-checkout .form-label {
+  color: var(--color-text-secondary);
 }
 
 /* Accent utilitário (uso estratégico) */

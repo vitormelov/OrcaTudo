@@ -224,7 +224,7 @@ function Dashboard() {
       </Row>
 
       <Row className="g-3 mb-4">
-        <Col lg={7}>
+        <Col xs={12} className="dashboard-col-span-3">
           <Card className="dashboard-card h-100">
             <Card.Header className="d-flex justify-content-between align-items-center flex-wrap gap-2">
               <span>
@@ -299,7 +299,7 @@ function Dashboard() {
           </Card>
         </Col>
 
-        <Col lg={5}>
+        <Col xs={12} className="dashboard-col-span-2">
           <Card className="dashboard-card h-100">
             <Card.Header>
               <FaFileInvoiceDollar className="me-2" />

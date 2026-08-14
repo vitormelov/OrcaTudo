@@ -20,7 +20,7 @@ function PrivateRoute({ children, adminOnly = false, requireEmpresa = true }) {
   }
 
   if (adminOnly && !isAdmin) {
-    return <Navigate to="/" replace />;
+    return <Navigate to="/app" replace />;
   }
 
   if (requireEmpresa && !empresaId && location.pathname !== '/empresas') {

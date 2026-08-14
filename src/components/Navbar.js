@@ -27,7 +27,8 @@ function NavigationBar() {
     }
   }
 
-  if (!currentUser || location.pathname === '/login') {
+  const rotasPublicas = ['/', '/login', '/assinar', '/assinar/sucesso'];
+  if (!currentUser || rotasPublicas.includes(location.pathname)) {
     return null;
   }
 
@@ -36,7 +37,7 @@ function NavigationBar() {
   return (
     <Navbar expand="lg" className="mb-3 app-navbar" variant="dark">
       <Container>
-        <Navbar.Brand as={Link} to={naSelecao ? '/empresas' : '/'} className="d-flex align-items-center">
+        <Navbar.Brand as={Link} to={naSelecao ? '/empresas' : '/app'} className="d-flex align-items-center">
           <Logo height={44} />
         </Navbar.Brand>
 
@@ -44,7 +45,7 @@ function NavigationBar() {
         <Navbar.Collapse id="basic-navbar-nav">
           {!naSelecao && (
             <Nav className="me-auto">
-              <Nav.Link as={Link} to="/" className="d-flex align-items-center">
+              <Nav.Link as={Link} to="/app" className="d-flex align-items-center">
                 <FaHome className="me-1" />
                 Dashboard
               </Nav.Link>

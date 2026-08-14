@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Card, Form, Button, Alert, Container, Row, Col } from 'react-bootstrap';
 import { useAuth } from '../contexts/AuthContext';
 import { FaSignInAlt } from 'react-icons/fa';
@@ -88,7 +88,10 @@ function Login() {
                   </Button>
                 </Form>
                 <p className="text-muted small text-center mt-3 mb-0">
-                  O acesso é criado pelo administrador. Não há cadastro nesta tela.
+                  Ainda não tem acesso?{' '}
+                  <Link to="/assinar" className="fw-semibold">Assine o plano</Link>
+                  {' · '}
+                  <Link to="/" className="fw-semibold">Voltar à home</Link>
                 </p>
               </Card.Body>
             </Card>
