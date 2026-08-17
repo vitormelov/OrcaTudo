@@ -6,7 +6,7 @@ import { db } from '../firebase/config';
 import { useAuth } from '../contexts/AuthContext';
 import { useEmpresa } from '../contexts/EmpresaContext';
 import { useParams, useNavigate } from 'react-router-dom';
-import {
+import { 
   migrarEapAntigo, stripUidsForSave, getCompsDoNo, calcularValorTotal, newId
 } from '../utils/eapTree';
 import { copiarEAPCompleta, formatRevisao, getObraId, getRevisao } from '../utils/eapCopy';
@@ -25,7 +25,7 @@ const formatarDataAmigavel = (dataISO) => {
   if (diffDias > 0) return `${diffDias} dia${diffDias > 1 ? 's' : ''} atrás`;
   if (diffHoras > 0) return `${diffHoras} hora${diffHoras > 1 ? 's' : ''} atrás`;
   if (diffMinutos > 0) return `${diffMinutos} minuto${diffMinutos > 1 ? 's' : ''} atrás`;
-  return 'Agora mesmo';
+    return 'Agora mesmo';
 };
 
 const getStatusColor = (status) => ({
@@ -51,7 +51,7 @@ function OrcamentoEAP() {
   const { empresaId, podeEditar } = useEmpresa();
   const { id: orcamentoId } = useParams();
   const navigate = useNavigate();
-
+  
   const [orcamento, setOrcamento] = useState(null);
   const [catalogoComposicoes, setCatalogoComposicoes] = useState([]);
   const [insumos, setInsumos] = useState([]);
@@ -92,8 +92,8 @@ function OrcamentoEAP() {
         if (data.empresaId !== empresaId) { setError('Sem permissão para este orçamento'); return; }
       } else if (data.userId !== currentUser.uid) {
         setError('Sem permissão para este orçamento');
-        return;
-      }
+          return;
+        }
       // Normalizar orçamentos antigos sem revisão
       if (!data.obraId) data.obraId = data.id;
       if (!Number.isFinite(Number(data.revisao))) data.revisao = 0;
@@ -233,7 +233,7 @@ function OrcamentoEAP() {
         }
         if (editingNo.tipo === 'grupo') {
           return {
-            ...prev,
+      ...prev,
             pacotes: pacotes.map((p) =>
               p.id === editingNo.pacoteId
                 ? { ...p, grupos: (p.grupos || []).map((g) => (g.id === editingNo.id ? { ...g, nome } : g)) }
@@ -243,19 +243,19 @@ function OrcamentoEAP() {
         }
         if (editingNo.tipo === 'subgrupo') {
           return {
-            ...prev,
+      ...prev,
             pacotes: pacotes.map((p) =>
               p.id === editingNo.pacoteId
-                ? {
-                    ...p,
+          ? { 
+              ...p, 
                     grupos: (p.grupos || []).map((g) =>
                       g.id === editingNo.grupoId
                         ? { ...g, subgrupos: (g.subgrupos || []).map((s) => (s.id === editingNo.id ? { ...s, nome } : s)) }
                         : g
-                    )
-                  }
-                : p
-            )
+              )
+            }
+          : p
+      )
           };
         }
       }
@@ -264,7 +264,7 @@ function OrcamentoEAP() {
         const id = newId('pacote');
         pacotes.push({ id, uid: newId('pacote'), nome, ordem: pacotes.length, grupos: [] });
         setAbertos((a) => ({ ...a, [id]: true }));
-        return { ...prev, pacotes };
+      return { ...prev, pacotes };
       }
       if (modalNoTipo === 'grupo' && modalNoParent?.pacoteId) {
         const id = newId('grupo');
@@ -280,8 +280,8 @@ function OrcamentoEAP() {
       }
       if (modalNoTipo === 'subgrupo' && modalNoParent?.pacoteId && modalNoParent?.grupoId) {
         const id = newId('subgrupo');
-        return {
-          ...prev,
+      return {
+        ...prev,
           pacotes: pacotes.map((p) => {
             if (p.id !== modalNoParent.pacoteId) return p;
             return {
@@ -698,31 +698,31 @@ function OrcamentoEAP() {
 
       <Modal show={showModalNo} onHide={() => setShowModalNo(false)}>
         <Form onSubmit={salvarNo}>
-          <Modal.Header closeButton>
-            <Modal.Title>
+        <Modal.Header closeButton>
+          <Modal.Title>
               {editingNo ? 'Editar' : 'Novo'}{' '}
               {modalNoTipo === 'pacote' ? 'Pacote' : modalNoTipo === 'grupo' ? 'Grupo' : 'Subgrupo'}
-            </Modal.Title>
-          </Modal.Header>
-          <Modal.Body>
-            <Form.Group>
+          </Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <Form.Group>
               <Form.Label>Nome</Form.Label>
               <Form.Control value={modalNoNome} onChange={(e) => setModalNoNome(e.target.value)} required autoFocus />
-            </Form.Group>
-          </Modal.Body>
-          <Modal.Footer>
+          </Form.Group>
+        </Modal.Body>
+        <Modal.Footer>
             <Button variant="secondary" onClick={() => setShowModalNo(false)}>Cancelar</Button>
             <Button type="submit" variant="primary">Salvar</Button>
-          </Modal.Footer>
+        </Modal.Footer>
         </Form>
       </Modal>
 
       <Modal show={showModalComp} onHide={() => setShowModalComp(false)} size="lg">
         <Form onSubmit={salvarComposicao}>
-          <Modal.Header closeButton>
+        <Modal.Header closeButton>
             <Modal.Title>{editingComp ? 'Editar composição' : 'Adicionar composição'}</Modal.Title>
-          </Modal.Header>
-          <Modal.Body>
+        </Modal.Header>
+        <Modal.Body>
             <InputGroup className="mb-3">
               <Form.Control placeholder="Buscar no catálogo..." value={compSearch} onChange={(e) => setCompSearch(e.target.value)} />
             </InputGroup>
@@ -739,19 +739,19 @@ function OrcamentoEAP() {
                 </div>
               ))}
             </div>
-            <Form.Group>
+          <Form.Group>
               <Form.Label>Quantidade</Form.Label>
-              <Form.Control
+            <Form.Control
                 type="number" min="0" step="0.01" required
                 value={compForm.quantidade}
                 onChange={(e) => setCompForm((f) => ({ ...f, quantidade: e.target.value }))}
-              />
-            </Form.Group>
-          </Modal.Body>
-          <Modal.Footer>
+            />
+          </Form.Group>
+        </Modal.Body>
+        <Modal.Footer>
             <Button variant="secondary" onClick={() => setShowModalComp(false)}>Cancelar</Button>
             <Button type="submit" variant="primary" disabled={!compForm.composicaoId}>Salvar</Button>
-          </Modal.Footer>
+        </Modal.Footer>
         </Form>
       </Modal>
 
@@ -761,11 +761,11 @@ function OrcamentoEAP() {
           {['lucro', 'tributos', 'financeiro', 'garantias'].map((campo) => (
             <Form.Group className="mb-3" key={campo}>
               <Form.Label className="text-capitalize">{campo} (%)</Form.Label>
-              <Form.Control
+            <Form.Control
                 type="number" step="0.01" value={bdiConfig[campo]}
                 onChange={(e) => setBdiConfig({ ...bdiConfig, [campo]: parseFloat(e.target.value) || 0 })}
-              />
-            </Form.Group>
+            />
+          </Form.Group>
           ))}
           <Alert variant="info" className="mb-0">
             BDI = {calcularBDI().toFixed(2)}% · Total c/ BDI: {formatCurrency(valorComBDI)}

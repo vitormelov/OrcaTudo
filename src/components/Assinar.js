@@ -12,42 +12,38 @@ import {
 } from 'react-bootstrap';
 import { FaCheckCircle, FaLock, FaArrowLeft } from 'react-icons/fa';
 import Logo from './Logo';
+import { useAuth } from '../contexts/AuthContext';
 import {
   getPlano,
   formatarPrecoPlano,
-  percentualDesconto,
   precoMensalAnual,
   precoAnualTotal,
-  OFERTA
+  OFERTA,
+  TRIAL_DIAS,
+  PLANO_PADRAO_ID
 } from '../constants/plano';
-
-const ESTADOS = [
-  'AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA',
-  'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN',
-  'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO'
-];
+import { formatarCpf, validarCpf } from '../utils/documentoFiscal';
+import { iniciarTrial } from '../utils/iniciarTrial';
 
 const FORM_INICIAL = {
   nome: '',
   email: '',
   senha: '',
   confirmarSenha: '',
-  nomeEmpresa: '',
   telefone: '',
-  cep: '',
-  logradouro: '',
-  numero: '',
-  complemento: '',
-  bairro: '',
-  cidade: '',
-  estado: '',
+  cpf: '',
   aceitouTermos: false
 };
 
 function Assinar() {
   const navigate = useNavigate();
+  const { recarregarPerfil } = useAuth();
   const [searchParams] = useSearchParams();
-  const plano = useMemo(() => getPlano(searchParams.get('plano')), [searchParams]);
+  const plano = useMemo(
+    () => getPlano(searchParams.get('plano') || PLANO_PADRAO_ID),
+    [searchParams]
+  );
+  const isTrial = searchParams.get('trial') === '1';
   const ciclo = searchParams.get('ciclo') === 'mensal' ? 'mensal' : 'anual';
   const isAnual = ciclo === 'anual';
   const [form, setForm] = useState(FORM_INICIAL);
@@ -55,37 +51,19 @@ function Assinar() {
   const [error, setError] = useState('');
   const valorCobrado = isAnual ? precoMensalAnual(plano) : plano.precoMensal;
   const valorCheioRef = isAnual ? plano.precoMensal : plano.precoCheio;
-  const pct = isAnual ? OFERTA.descontoAnualPct : percentualDesconto(plano);
 
   function atualizar(campo, valor) {
     setForm((prev) => ({ ...prev, [campo]: valor }));
-  }
-
-  async function buscarCep(cepRaw) {
-    const cep = String(cepRaw || '').replace(/\D/g, '');
-    atualizar('cep', cepRaw);
-    if (cep.length !== 8) return;
-    try {
-      const res = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
-      const data = await res.json();
-      if (data.erro) return;
-      setForm((prev) => ({
-        ...prev,
-        cep: cepRaw,
-        logradouro: data.logradouro || prev.logradouro,
-        bairro: data.bairro || prev.bairro,
-        cidade: data.localidade || prev.cidade,
-        estado: data.uf || prev.estado
-      }));
-    } catch {
-      // CEP opcional no preenchimento automático
-    }
   }
 
   async function handleSubmit(e) {
     e.preventDefault();
     setError('');
 
+    if (!validarCpf(form.cpf)) {
+      setError('Informe um CPF válido.');
+      return;
+    }
     if (form.senha.length < 6) {
       setError('A senha deve ter pelo menos 6 caracteres.');
       return;
@@ -101,37 +79,70 @@ function Assinar() {
 
     setLoading(true);
 
-    const pendente = {
-      ...form,
-      senha: undefined,
-      confirmarSenha: undefined,
-      planoId: plano.id,
-      plano: plano.nome,
-      ciclo,
-      valorCheio: valorCheioRef,
-      valor: valorCobrado,
-      valorAnualTotal: isAnual ? precoAnualTotal(plano) : null,
-      criadoEm: new Date().toISOString()
-    };
     try {
-      sessionStorage.setItem('orcaobra_assinatura_pendente', JSON.stringify(pendente));
-    } catch {
-      // sessionStorage pode falhar em modo privado; seguimos mesmo assim
-    }
-
-    await new Promise((r) => setTimeout(r, 800));
-    setLoading(false);
-    navigate('/assinar/sucesso', {
-      state: {
-        email: form.email,
-        nome: form.nome,
-        nomeEmpresa: form.nomeEmpresa,
-        planoId: plano.id,
-        planoNome: plano.nome,
-        ciclo,
-        valor: valorCobrado
+      if (isTrial) {
+        await iniciarTrial({
+          nome: form.nome,
+          email: form.email,
+          senha: form.senha,
+          telefone: form.telefone,
+          cpf: form.cpf
+        });
+        if (typeof recarregarPerfil === 'function') {
+          await recarregarPerfil();
+        }
+        navigate('/empresas', { replace: true });
+        return;
       }
-    });
+
+      const pendente = {
+        ...form,
+        senha: undefined,
+        confirmarSenha: undefined,
+        cpf: form.cpf,
+        planoId: plano.id,
+        plano: plano.nome,
+        ciclo,
+        valorCheio: valorCheioRef,
+        valor: valorCobrado,
+        valorAnualTotal: isAnual ? precoAnualTotal(plano) : null,
+        criadoEm: new Date().toISOString()
+      };
+      try {
+        sessionStorage.setItem('orcaobra_assinatura_pendente', JSON.stringify(pendente));
+      } catch {
+        // sessionStorage pode falhar em modo privado; seguimos mesmo assim
+      }
+
+      await new Promise((r) => setTimeout(r, 800));
+      navigate('/assinar/sucesso', {
+        state: {
+          email: form.email,
+          nome: form.nome,
+          planoId: plano.id,
+          planoNome: plano.nome,
+          ciclo,
+          valor: valorCobrado
+        }
+      });
+    } catch (err) {
+      const codigo = err?.code || '';
+      if (codigo === 'trial/documento-ja-usado') {
+        setError(err.message);
+      } else if (codigo === 'auth/email-already-in-use') {
+        setError('Este e-mail já possui uma conta. Faça login ou use outro e-mail.');
+      } else if (codigo === 'auth/weak-password') {
+        setError('A senha deve ter pelo menos 6 caracteres.');
+      } else if (codigo === 'auth/invalid-email') {
+        setError('E-mail inválido.');
+      } else if (codigo === 'permission-denied') {
+        setError('Não foi possível gravar o trial. Publique as regras do Firestore e tente de novo.');
+      } else {
+        setError(err?.message || 'Não foi possível concluir. Tente novamente.');
+      }
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -164,21 +175,35 @@ function Assinar() {
           <Col lg={4}>
             <Card className="landing-pricing-card border-0 shadow sticky-lg-top" style={{ top: 24 }}>
               <Card.Body className="p-4">
-                <div className="d-flex justify-content-between align-items-start">
-                  <span className="landing-plan-badge">{OFERTA.selo}</span>
-                  {pct > 0 && <span className="landing-discount-pill">-{pct}%</span>}
-                </div>
-                <h1 className="h4 text-dark mt-2 mb-1">{plano.nome}</h1>
-                <p className="text-muted small mb-2">
-                  {plano.usuarios} · cobrança {isAnual ? 'anual' : 'mensal'}
-                </p>
-                <div className="landing-price-old">De {formatarPrecoPlano(valorCheioRef)}</div>
-                <div className="landing-price mb-1">{formatarPrecoPlano(valorCobrado)}</div>
-                <p className="text-muted small mb-3">
-                  {isAnual
-                    ? `equivalente mensal · total ${formatarPrecoPlano(precoAnualTotal(plano))}/ano`
-                    : 'por mês na oferta do mês'}
-                </p>
+                {isTrial ? (
+                  <>
+                    <span className="landing-plan-badge landing-plan-badge--hot">Trial grátis</span>
+                    <h1 className="h4 text-dark mt-2 mb-1">{TRIAL_DIAS} dias para testar</h1>
+                    <p className="text-muted small mb-2">
+                      {plano.usuarios}
+                    </p>
+                    <div className="landing-price mb-1">R$ 0,00</div>
+                    <p className="text-muted small mb-3">
+                      Sem cartão no trial.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <div>
+                      <span className="landing-plan-badge">{OFERTA.selo}</span>
+                    </div>
+                    <p className="text-muted small mt-2 mb-2">
+                      {plano.usuarios} · cobrança {isAnual ? 'anual' : 'mensal'}
+                    </p>
+                    <div className="landing-price-old">De {formatarPrecoPlano(valorCheioRef)}</div>
+                    <div className="landing-price mb-1">{formatarPrecoPlano(valorCobrado)}</div>
+                    <p className="text-muted small mb-3">
+                      {isAnual
+                        ? `equivalente mensal · total ${formatarPrecoPlano(precoAnualTotal(plano))}/ano`
+                        : 'por mês na oferta do mês'}
+                    </p>
+                  </>
+                )}
 
                 <h2 className="h6 text-uppercase text-muted mb-2">O que você leva</h2>
                 <ListGroup variant="flush" className="mb-3">
@@ -194,9 +219,18 @@ function Assinar() {
                 </ListGroup>
 
                 <Alert variant="info" className="mb-0 small">
-                  <FaLock className="me-2" />
-                  Pagamento processado pelo <strong>Mercado Pago</strong>.
-                  Não pedimos nem guardamos número de cartão neste site.
+                  {isTrial ? (
+                    <>
+                      Depois de {TRIAL_DIAS} dias,
+                      escolha um plano para continuar.
+                    </>
+                  ) : (
+                    <>
+                      <FaLock className="me-2" />
+                      Pagamento processado pelo <strong>Mercado Pago</strong>.
+                      Não pedimos nem guardamos número de cartão neste site.
+                    </>
+                  )}
                 </Alert>
               </Card.Body>
             </Card>
@@ -205,10 +239,13 @@ function Assinar() {
           <Col lg={8}>
             <Card className="border-0 shadow">
               <Card.Body className="p-4 p-md-5">
-                <h2 className="h4 mb-1">Criar sua assinatura</h2>
+                <h2 className="h4 mb-1">
+                  {isTrial ? 'Começar o trial de 7 dias' : 'Criar sua assinatura'}
+                </h2>
                 <p className="text-muted mb-4">
-                  Preencha seus dados e o endereço de cobrança. Em seguida você será
-                  direcionado ao Mercado Pago para concluir o pagamento com segurança.
+                  {isTrial
+                    ? 'Preencha seus dados. Depois do login você cria ou acessa uma empresa.'
+                    : 'Preencha seus dados. Em seguida você será direcionado ao Mercado Pago para concluir o pagamento com segurança.'}
                 </p>
 
                 {error && <Alert variant="danger">{error}</Alert>}
@@ -266,12 +303,13 @@ function Assinar() {
                     </Col>
                     <Col md={6}>
                       <Form.Group>
-                        <Form.Label>Nome da empresa</Form.Label>
+                        <Form.Label>CPF</Form.Label>
                         <Form.Control
-                          value={form.nomeEmpresa}
-                          onChange={(e) => atualizar('nomeEmpresa', e.target.value)}
+                          value={form.cpf}
+                          onChange={(e) => atualizar('cpf', formatarCpf(e.target.value))}
                           required
-                          placeholder="Razão social ou nome fantasia"
+                          inputMode="numeric"
+                          placeholder="000.000.000-00"
                         />
                       </Form.Group>
                     </Col>
@@ -288,93 +326,14 @@ function Assinar() {
                     </Col>
                   </Row>
 
-                  <h3 className="h6 text-uppercase text-muted mb-3">Endereço de cobrança</h3>
-                  <Row className="g-3 mb-4">
-                    <Col md={4}>
-                      <Form.Group>
-                        <Form.Label>CEP</Form.Label>
-                        <Form.Control
-                          value={form.cep}
-                          onChange={(e) => buscarCep(e.target.value)}
-                          required
-                          placeholder="00000-000"
-                        />
-                      </Form.Group>
-                    </Col>
-                    <Col md={8}>
-                      <Form.Group>
-                        <Form.Label>Logradouro</Form.Label>
-                        <Form.Control
-                          value={form.logradouro}
-                          onChange={(e) => atualizar('logradouro', e.target.value)}
-                          required
-                          placeholder="Rua, avenida..."
-                        />
-                      </Form.Group>
-                    </Col>
-                    <Col md={3}>
-                      <Form.Group>
-                        <Form.Label>Número</Form.Label>
-                        <Form.Control
-                          value={form.numero}
-                          onChange={(e) => atualizar('numero', e.target.value)}
-                          required
-                        />
-                      </Form.Group>
-                    </Col>
-                    <Col md={5}>
-                      <Form.Group>
-                        <Form.Label>Complemento</Form.Label>
-                        <Form.Control
-                          value={form.complemento}
-                          onChange={(e) => atualizar('complemento', e.target.value)}
-                          placeholder="Opcional"
-                        />
-                      </Form.Group>
-                    </Col>
-                    <Col md={4}>
-                      <Form.Group>
-                        <Form.Label>Bairro</Form.Label>
-                        <Form.Control
-                          value={form.bairro}
-                          onChange={(e) => atualizar('bairro', e.target.value)}
-                          required
-                        />
-                      </Form.Group>
-                    </Col>
-                    <Col md={8}>
-                      <Form.Group>
-                        <Form.Label>Cidade</Form.Label>
-                        <Form.Control
-                          value={form.cidade}
-                          onChange={(e) => atualizar('cidade', e.target.value)}
-                          required
-                        />
-                      </Form.Group>
-                    </Col>
-                    <Col md={4}>
-                      <Form.Group>
-                        <Form.Label>Estado</Form.Label>
-                        <Form.Select
-                          value={form.estado}
-                          onChange={(e) => atualizar('estado', e.target.value)}
-                          required
-                        >
-                          <option value="">UF</option>
-                          {ESTADOS.map((uf) => (
-                            <option key={uf} value={uf}>{uf}</option>
-                          ))}
-                        </Form.Select>
-                      </Form.Group>
-                    </Col>
-                  </Row>
-
-                  <Alert variant="secondary" className="small">
-                    <strong>Próximo passo (Mercado Pago):</strong> após confirmar,
-                    você será redirecionado ao checkout do Mercado Pago para informar
-                    cartão, Pix ou outro meio. Quando o pagamento for aprovado, sua
-                    conta será liberada automaticamente.
-                  </Alert>
+                  {!isTrial && (
+                    <Alert variant="secondary" className="small">
+                      <strong>Próximo passo (Mercado Pago):</strong> após confirmar,
+                      você será redirecionado ao checkout do Mercado Pago para informar
+                      cartão, Pix ou outro meio. Quando o pagamento for aprovado, sua
+                      conta será liberada automaticamente.
+                    </Alert>
+                  )}
 
                   <Form.Check
                     className="mb-4"
@@ -383,14 +342,20 @@ function Assinar() {
                     checked={form.aceitouTermos}
                     onChange={(e) => atualizar('aceitouTermos', e.target.checked)}
                     label={
-                      <>
-                        Concordo em assinar o plano <strong>{plano.nome}</strong> por{' '}
-                        <strong>{formatarPrecoPlano(valorCobrado)}/mês</strong>
-                        {isAnual
-                          ? ` (cobrança anual de ${formatarPrecoPlano(precoAnualTotal(plano))})`
-                          : ` (de ${formatarPrecoPlano(plano.precoCheio)})`}
-                        .
-                      </>
+                      isTrial ? (
+                        <>
+                          Concordo em iniciar o trial de <strong>{TRIAL_DIAS} dias</strong>.
+                        </>
+                      ) : (
+                        <>
+                          Concordo em assinar por{' '}
+                          <strong>{formatarPrecoPlano(valorCobrado)}/mês</strong>
+                          {isAnual
+                            ? ` (cobrança anual de ${formatarPrecoPlano(precoAnualTotal(plano))})`
+                            : ` (de ${formatarPrecoPlano(plano.precoCheio)})`}
+                          .
+                        </>
+                      )
                     }
                     required
                   />
@@ -403,8 +368,10 @@ function Assinar() {
                     disabled={loading}
                   >
                     {loading
-                      ? 'Preparando checkout seguro...'
-                      : `Continuar para o pagamento · ${formatarPrecoPlano(valorCobrado)}/mês`}
+                      ? (isTrial ? 'Criando sua conta...' : 'Preparando checkout seguro...')
+                      : (isTrial
+                        ? `Começar trial de ${TRIAL_DIAS} dias`
+                        : `Continuar para o pagamento · ${formatarPrecoPlano(valorCobrado)}/mês`)}
                   </Button>
                 </Form>
               </Card.Body>

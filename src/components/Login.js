@@ -89,6 +89,8 @@ function Login() {
                 </Form>
                 <p className="text-muted small text-center mt-3 mb-0">
                   Ainda não tem acesso?{' '}
+                  <Link to="/assinar?trial=1" className="fw-semibold">Testar 7 dias grátis</Link>
+                  {' · '}
                   <Link to="/assinar" className="fw-semibold">Assine o plano</Link>
                   {' · '}
                   <Link to="/" className="fw-semibold">Voltar à home</Link>

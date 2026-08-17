@@ -78,12 +78,60 @@ service cloud.firestore {
 
     match /empresas/{empresaId} {
       allow read: if isAdmin() || isVinculado(empresaId);
-      allow create, update, delete: if isAdmin();
+      allow create: if isAdmin() || (
+        isSignedIn() &&
+        request.resource.data.createdBy == request.auth.uid &&
+        exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.criouEmpresa != true
+      );
+      allow update, delete: if isAdmin();
 
       match /membros/{uid} {
         allow read: if isAdmin() || request.auth.uid == uid || isMember(empresaId);
-        allow create, update, delete: if isAdmin();
+        allow create: if isAdmin() || (
+          isSignedIn() &&
+          request.auth.uid == uid &&
+          empresaAtiva(empresaId)
+        );
+        allow update, delete: if isAdmin();
       }
+    }
+
+    match /empresasPorCnpj/{cnpj} {
+      allow get: if isSignedIn();
+      allow list: if isAdmin();
+      allow create: if isAdmin() || (
+        isSignedIn()
+        && request.resource.data.createdBy == request.auth.uid
+        && cnpj.matches('^[0-9]{14}$')
+        && exists(/databases/$(database)/documents/usuarios/$(request.auth.uid))
+        && get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.criouEmpresa != true
+      );
+      allow update: if isAdmin() || (
+        isSignedIn() && resource.data.createdBy == request.auth.uid
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /logsAcesso/{logId} {
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.acao is string;
+      allow read: if isAdmin();
+      allow update, delete: if isAdmin();
+    }
+
+    match /documentosFiscais/{docId} {
+      allow get: if isAdmin() || (
+        isSignedIn() && resource.data.uid == request.auth.uid
+      );
+      allow list: if isAdmin();
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.cpfCnpj == docId
+        && request.resource.data.trialUsado == true
+        && (docId.matches('^[0-9]{11}$'));
+      allow update, delete: if isAdmin();
     }
 
     match /insumos/{document} {

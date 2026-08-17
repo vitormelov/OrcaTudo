@@ -2,16 +2,21 @@ import React, { createContext, useContext, useEffect, useMemo, useState } from '
 import {
   addDoc,
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
   query,
+  setDoc,
+  updateDoc,
   where,
   writeBatch
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useAuth } from './AuthContext';
 import { EMPRESA_STORAGE_KEY, EMPRESA_NOME_STORAGE_KEY } from '../constants/admin';
+import { registrarLog } from '../utils/activityLog';
+import { soDigitos, validarCnpj } from '../utils/documentoFiscal';
 
 const EmpresaContext = createContext();
 
@@ -36,7 +41,7 @@ async function migrarColecaoParaEmpresa(nomeColecao, userId, empresaId) {
 }
 
 export function EmpresaProvider({ children }) {
-  const { currentUser, perfil, isAdmin } = useAuth();
+  const { currentUser, perfil, isAdmin, recarregarPerfil, setPerfil } = useAuth();
   const [empresaId, setEmpresaId] = useState(() => {
     try {
       return sessionStorage.getItem(EMPRESA_STORAGE_KEY) || '';
@@ -112,6 +117,15 @@ export function EmpresaProvider({ children }) {
     }
     try { sessionStorage.setItem(EMPRESA_STORAGE_KEY, id); } catch { /* ignore */ }
     if (currentUser?.uid && id) {
+      await registrarLog({
+        uid: currentUser.uid,
+        email: currentUser.email,
+        displayName: currentUser.displayName || perfil?.displayName,
+        acao: 'empresa',
+        detalhe: `Acessou a empresa ${nomeFinal}`,
+        empresaId: id,
+        empresaNome: nomeFinal
+      });
       try {
         await Promise.all([
           migrarColecaoParaEmpresa('insumos', currentUser.uid, id),
@@ -145,17 +159,145 @@ export function EmpresaProvider({ children }) {
       throw new Error(`Já existe uma empresa com o nome "${nomeTrim}".`);
     }
     const extras = typeof dados === 'object' && dados ? dados : {};
+    const cnpj = soDigitos(extras.cnpj || '');
     const ref = await addDoc(collection(db, 'empresas'), {
       nome: nomeTrim,
       endereco: String(extras.endereco || '').trim(),
       telefone: String(extras.telefone || '').trim(),
-      email: String(extras.email || '').trim(),
-      cnpj: String(extras.cnpj || '').trim(),
+      email: String(extras.email || '').trim().toLowerCase(),
+      cnpj,
       bloqueada: false,
       createdAt: new Date(),
       createdBy: currentUser.uid
     });
+    if (cnpj.length === 14) {
+      await setDoc(doc(db, 'empresasPorCnpj', cnpj), {
+        empresaId: ref.id,
+        nome: nomeTrim,
+        email: String(extras.email || '').trim().toLowerCase(),
+        createdBy: currentUser.uid,
+        createdAt: new Date()
+      });
+    }
     return { id: ref.id, nome: nomeTrim };
+  };
+
+  const criarMinhaEmpresa = async (dados) => {
+    if (!currentUser?.uid) throw new Error('Faça login para criar uma empresa.');
+    if (perfil?.criouEmpresa) {
+      throw new Error('Você já criou uma empresa. Para outras, entre pelo CNPJ.');
+    }
+    const nomeTrim = String(dados?.nome || '').trim();
+    const emailTrim = String(dados?.email || '').trim().toLowerCase();
+    const cnpj = soDigitos(dados?.cnpj);
+    if (!nomeTrim) throw new Error('Informe o nome da empresa.');
+    if (!emailTrim) throw new Error('Informe o e-mail da empresa.');
+    if (!validarCnpj(cnpj)) throw new Error('Informe um CNPJ válido.');
+
+    const idx = await getDoc(doc(db, 'empresasPorCnpj', cnpj));
+    if (idx.exists()) {
+      throw new Error('Já existe uma empresa cadastrada com este CNPJ. Use “Acessar empresa”.');
+    }
+
+    const agora = new Date();
+    const endereco = String(dados?.endereco || '').trim();
+    const telefone = String(dados?.telefone || '').trim();
+    const ref = await addDoc(collection(db, 'empresas'), {
+      nome: nomeTrim,
+      endereco,
+      telefone,
+      email: emailTrim,
+      cnpj,
+      bloqueada: false,
+      origem: 'usuario',
+      createdAt: agora,
+      createdBy: currentUser.uid
+    });
+
+    try {
+      await setDoc(doc(db, 'empresasPorCnpj', cnpj), {
+        empresaId: ref.id,
+        nome: nomeTrim,
+        email: emailTrim,
+        createdBy: currentUser.uid,
+        createdAt: agora
+      });
+    } catch (e) {
+      await deleteDoc(doc(db, 'empresas', ref.id)).catch(() => {});
+      throw new Error('Já existe uma empresa cadastrada com este CNPJ. Use “Acessar empresa”.');
+    }
+
+    await setDoc(doc(db, 'empresas', ref.id, 'membros', currentUser.uid), {
+      uid: currentUser.uid,
+      email: currentUser.email,
+      displayName: currentUser.displayName || perfil?.displayName || '',
+      colaborador: true,
+      createdAt: agora
+    });
+
+    const empresasUser = [
+      ...(perfil?.empresas || []).filter((x) => x.id !== ref.id),
+      { id: ref.id, nome: nomeTrim, colaborador: true }
+    ];
+    await updateDoc(doc(db, 'usuarios', currentUser.uid), {
+      criouEmpresa: true,
+      empresaCriadaId: ref.id,
+      empresas: empresasUser
+    });
+    if (typeof recarregarPerfil === 'function') {
+      await recarregarPerfil();
+    } else if (setPerfil) {
+      setPerfil((prev) => ({
+        ...(prev || {}),
+        criouEmpresa: true,
+        empresaCriadaId: ref.id,
+        empresas: empresasUser
+      }));
+    }
+    return { id: ref.id, nome: nomeTrim };
+  };
+
+  const buscarEmpresaPorCnpj = async (cnpjRaw) => {
+    const cnpj = soDigitos(cnpjRaw);
+    if (!validarCnpj(cnpj)) throw new Error('Informe um CNPJ válido.');
+    const snap = await getDoc(doc(db, 'empresasPorCnpj', cnpj));
+    if (!snap.exists()) {
+      throw new Error('Nenhuma empresa encontrada com este CNPJ.');
+    }
+    return { cnpj, ...snap.data() };
+  };
+
+  const entrarPorCnpj = async (cnpjRaw) => {
+    if (!currentUser?.uid) throw new Error('Faça login para acessar uma empresa.');
+    const encontrada = await buscarEmpresaPorCnpj(cnpjRaw);
+    const empresaId = encontrada.empresaId;
+    const nome = encontrada.nome || 'Empresa';
+    if ((perfil?.empresas || []).some((e) => e.id === empresaId)) {
+      return { id: empresaId, nome, jaEraMembro: true };
+    }
+
+    const agora = new Date();
+    await setDoc(doc(db, 'empresas', empresaId, 'membros', currentUser.uid), {
+      uid: currentUser.uid,
+      email: currentUser.email,
+      displayName: currentUser.displayName || perfil?.displayName || '',
+      colaborador: true,
+      createdAt: agora
+    });
+
+    const empresasUser = [
+      ...(perfil?.empresas || []),
+      { id: empresaId, nome, colaborador: true }
+    ];
+    await updateDoc(doc(db, 'usuarios', currentUser.uid), {
+      empresas: empresasUser
+    });
+    if (typeof recarregarPerfil === 'function') {
+      await recarregarPerfil();
+    } else if (setPerfil) {
+      setPerfil((prev) => ({ ...(prev || {}), empresas: empresasUser }));
+    }
+    return { id: empresaId, nome, jaEraMembro: false };
   };
 
   const colaborador = Boolean(isAdmin || membershipAtual?.colaborador);
@@ -171,7 +313,10 @@ export function EmpresaProvider({ children }) {
     podeEditar,
     selecionarEmpresa,
     limparEmpresa,
-    criarEmpresa
+    criarEmpresa,
+    criarMinhaEmpresa,
+    buscarEmpresaPorCnpj,
+    entrarPorCnpj
   };
 
   return (

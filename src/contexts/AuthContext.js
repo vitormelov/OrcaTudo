@@ -9,6 +9,7 @@ import {
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db, getSecondaryAuth } from '../firebase/config';
 import { isAdminEmail } from '../constants/admin';
+import { registrarLog } from '../utils/activityLog';
 
 export const MENSAGEM_USUARIO_BLOQUEADO =
   'Seu usuário foi bloqueado. Entre em contato com o administrador.';
@@ -54,11 +55,11 @@ export function AuthProvider({ children }) {
       displayName: user.displayName || '',
       isAdmin: isAdminEmail(user.email),
       bloqueado: false,
-      empresas: [],
       createdAt: new Date()
     };
-    await setDoc(ref, novo);
-    const criado = { id: user.uid, ...novo };
+    await setDoc(ref, novo, { merge: true });
+    const atual = await getDoc(ref);
+    const criado = { id: user.uid, empresas: [], ...atual.data() };
     setPerfil(criado);
     return criado;
   }
@@ -72,11 +73,36 @@ export function AuthProvider({ children }) {
       err.code = 'auth/user-blocked';
       throw err;
     }
+    try {
+      sessionStorage.setItem('orcatudo.justLoggedIn', '1');
+    } catch { /* ignore */ }
+    const dados = snap.exists() ? snap.data() : {};
+    await registrarLog({
+      uid: cred.user.uid,
+      email: cred.user.email,
+      displayName: cred.user.displayName || dados.displayName,
+      acao: 'login',
+      detalhe: 'Entrou no sistema'
+    });
     return cred;
   }
 
   async function logout() {
+    const user = auth.currentUser;
+    if (user && !isAdminEmail(user.email)) {
+      await registrarLog({
+        uid: user.uid,
+        email: user.email,
+        displayName: user.displayName || perfil?.displayName,
+        acao: 'logout',
+        detalhe: 'Saiu do sistema'
+      });
+    }
     setPerfil(null);
+    try {
+      sessionStorage.removeItem('orcatudo.justLoggedIn');
+      if (user?.uid) sessionStorage.removeItem(`orcatudo.sessaoLog.${user.uid}`);
+    } catch { /* ignore */ }
     return signOut(auth);
   }
 
@@ -95,7 +121,29 @@ export function AuthProvider({ children }) {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
       try {
-        await carregarPerfil(user);
+        const perfilCarregado = await carregarPerfil(user);
+        if (user && !isAdminEmail(user.email)) {
+          const sessaoKey = `orcatudo.sessaoLog.${user.uid}`;
+          let recemLogin = false;
+          try {
+            recemLogin = sessionStorage.getItem('orcatudo.justLoggedIn') === '1';
+            if (recemLogin) sessionStorage.removeItem('orcatudo.justLoggedIn');
+          } catch { /* ignore */ }
+          try {
+            if (!recemLogin && !sessionStorage.getItem(sessaoKey)) {
+              sessionStorage.setItem(sessaoKey, '1');
+              await registrarLog({
+                uid: user.uid,
+                email: user.email,
+                displayName: user.displayName || perfilCarregado?.displayName,
+                acao: 'sessao',
+                detalhe: 'Reabriu o sistema com sessão ativa'
+              });
+            } else if (recemLogin) {
+              sessionStorage.setItem(sessaoKey, '1');
+            }
+          } catch { /* ignore */ }
+        }
       } catch (e) {
         if (e.code === 'auth/user-blocked') {
           setCurrentUser(null);
@@ -122,7 +170,7 @@ export function AuthProvider({ children }) {
     loading,
     login,
     logout,
-    recarregarPerfil: () => carregarPerfil(currentUser),
+    recarregarPerfil: () => carregarPerfil(auth.currentUser || currentUser),
     criarUsuarioAuth
   };
 

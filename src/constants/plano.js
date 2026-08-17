@@ -1,6 +1,7 @@
 export const MOEDA = 'BRL';
 
 export const MODULOS_COMUNS = [
+  'Insumos e composições da SEINFRA inclusos',
   'Insumos com base e cadastro próprio',
   'Composições de custos',
   'Orçamentos completos com EAP',
@@ -21,6 +22,8 @@ export const OFERTA = {
   urgencia: 'Condições válidas para quem fechar agora',
   descontoAnualPct: 17
 };
+
+export const TRIAL_DIAS = 7;
 
 /**
  * Estrutura comercial:
@@ -48,8 +51,8 @@ export const PLANOS = [
     nome: 'Empresa',
     descricao: 'Ideal para pequenas construtoras',
     usuarios: 'Até 5 usuários',
-    precoCheio: 229,
-    precoMensal: 179,
+    precoCheio: 179,
+    precoMensal: 149,
     destaque: true,
     seloDestaque: 'Mais popular',
     recursos: [

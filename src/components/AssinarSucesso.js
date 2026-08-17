@@ -9,7 +9,6 @@ function AssinarSucesso() {
   const location = useLocation();
   const email = location.state?.email;
   const nome = location.state?.nome;
-  const nomeEmpresa = location.state?.nomeEmpresa;
   const plano = getPlano(location.state?.planoId);
   const ciclo = location.state?.ciclo === 'mensal' ? 'mensal' : 'anual';
   const valor = location.state?.valor ?? (ciclo === 'anual' ? precoMensalAnual(plano) : plano.precoMensal);
@@ -39,8 +38,7 @@ function AssinarSucesso() {
               {nome ? `Obrigado, ${nome}. ` : ''}
               Registramos seu interesse no plano{' '}
               <strong>{planoNome}</strong> ({formatarPrecoPlano(valor)}/mês
-              {ciclo === 'anual' ? ', cobrança anual' : ''})
-              {nomeEmpresa ? ` para ${nomeEmpresa}` : ''}.
+              {ciclo === 'anual' ? ', cobrança anual' : ''}).
             </p>
 
             <Alert variant="warning" className="text-start small">

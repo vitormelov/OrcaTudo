@@ -8,9 +8,10 @@ import {
   FaBalanceScale, FaUser, FaSignOutAlt, FaBuilding, FaUsersCog
 } from 'react-icons/fa';
 import Logo from './Logo';
+import { diasTrialRestantes, isContaTrial, isTrialExpirado } from '../utils/trial';
 
 function NavigationBar() {
-  const { currentUser, logout, isAdmin } = useAuth();
+  const { currentUser, logout, isAdmin, perfil } = useAuth();
   const { empresaNome, limparEmpresa } = useEmpresa();
   const navigate = useNavigate();
   const location = useLocation();
@@ -33,6 +34,8 @@ function NavigationBar() {
   }
 
   const naSelecao = location.pathname === '/empresas';
+  const diasTrial = diasTrialRestantes(perfil);
+  const mostrarTrial = isContaTrial(perfil) && !isTrialExpirado(perfil) && diasTrial != null;
 
   return (
     <Navbar expand="lg" className="mb-3 app-navbar" variant="dark">
@@ -70,6 +73,11 @@ function NavigationBar() {
           {naSelecao && <Nav className="me-auto" />}
 
           <Nav>
+            {mostrarTrial && (
+              <Navbar.Text className="text-warning me-3 d-none d-md-inline small">
+                Trial: {diasTrial} {diasTrial === 1 ? 'dia' : 'dias'} restantes
+              </Navbar.Text>
+            )}
             {empresaNome && !naSelecao && (
               <Navbar.Text className="text-white me-3 d-none d-md-inline">
                 <FaBuilding className="me-1" />

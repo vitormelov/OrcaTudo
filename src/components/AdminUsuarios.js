@@ -9,9 +9,11 @@ import { db } from '../firebase/config';
 import { useAuth } from '../contexts/AuthContext';
 import { useEmpresa } from '../contexts/EmpresaContext';
 import { isAdminEmail } from '../constants/admin';
+import { formatarCnpj, soDigitos } from '../utils/documentoFiscal';
 import {
-  FaUserPlus, FaUsers, FaBuilding, FaSave, FaEdit, FaTrash, FaBan, FaUnlock, FaPlus
+  FaUserPlus, FaUsers, FaBuilding, FaSave, FaEdit, FaTrash, FaBan, FaUnlock, FaPlus, FaHistory
 } from 'react-icons/fa';
+import AdminLogs from './AdminLogs';
 
 function normalizarTexto(valor) {
   return String(valor || '').trim().replace(/\s+/g, ' ').toLowerCase();
@@ -136,7 +138,7 @@ function AdminUsuarios() {
       endereco: empresa.endereco || '',
       telefone: empresa.telefone || '',
       email: empresa.email || '',
-      cnpj: empresa.cnpj || ''
+      cnpj: formatarCnpj(empresa.cnpj || '')
     });
     setShowEmpresaModal(true);
   };
@@ -144,12 +146,13 @@ function AdminUsuarios() {
   const handleSalvarEmpresa = async (e) => {
     e.preventDefault();
     const nomeTrim = formEmpresa.nome.trim();
+    const cnpjNovo = soDigitos(formEmpresa.cnpj);
     const dadosEmpresa = {
       nome: nomeTrim,
       endereco: formEmpresa.endereco.trim(),
       telefone: formEmpresa.telefone.trim(),
-      email: formEmpresa.email.trim(),
-      cnpj: formEmpresa.cnpj.trim()
+      email: formEmpresa.email.trim().toLowerCase(),
+      cnpj: cnpjNovo
     };
     if (!nomeTrim) {
       setError('Informe o nome da empresa.');
@@ -171,6 +174,19 @@ function AdminUsuarios() {
           ...dadosEmpresa,
           updatedAt: new Date()
         });
+        const cnpjAntigo = soDigitos(editandoEmpresa.cnpj);
+        if (cnpjAntigo && cnpjAntigo !== cnpjNovo) {
+          await deleteDoc(doc(db, 'empresasPorCnpj', cnpjAntigo)).catch(() => {});
+        }
+        if (cnpjNovo.length === 14) {
+          await setDoc(doc(db, 'empresasPorCnpj', cnpjNovo), {
+            empresaId: editandoEmpresa.id,
+            nome: nomeTrim,
+            email: dadosEmpresa.email,
+            createdBy: currentUser.uid,
+            createdAt: new Date()
+          });
+        }
         const afetados = usuarios.filter((u) =>
           (u.empresas || []).some((x) => x.id === editandoEmpresa.id)
         );
@@ -251,6 +267,10 @@ function AdminUsuarios() {
           empresas: (u.empresas || []).filter((x) => x.id !== empresa.id)
         })
       ));
+      const cnpj = soDigitos(empresa.cnpj);
+      if (cnpj.length === 14) {
+        await deleteDoc(doc(db, 'empresasPorCnpj', cnpj)).catch(() => {});
+      }
       await deleteDoc(doc(db, 'empresas', empresa.id));
       if (empresaId === empresa.id) {
         limparEmpresa();
@@ -355,16 +375,14 @@ function AdminUsuarios() {
     e.preventDefault();
     setError('');
     setSuccess('');
-    if (!form.empresaId) {
-      setError('Selecione a empresa do usuário.');
-      return;
-    }
-    const empresa = empresas.find((x) => x.id === form.empresaId);
-    if (!empresa) {
+    const empresa = form.empresaId
+      ? empresas.find((x) => x.id === form.empresaId)
+      : null;
+    if (form.empresaId && !empresa) {
       setError('Empresa inválida.');
       return;
     }
-    if (empresa.bloqueada) {
+    if (empresa?.bloqueada) {
       setError('Não é possível vincular usuário a uma empresa bloqueada.');
       return;
     }
@@ -388,24 +406,28 @@ function AdminUsuarios() {
 
     try {
       setLoading(true);
-      if (editandoUser) {
-        const empresasUser = [{
+      const empresasUser = empresa
+        ? [{
           id: empresa.id,
           nome: empresa.nome,
           colaborador: Boolean(form.colaborador)
-        }];
+        }]
+        : [];
+      if (editandoUser) {
         await updateDoc(doc(db, 'usuarios', editandoUser.id), {
           displayName: nomeTrim,
           empresas: empresasUser
         });
-        await sincronizarMembro(
-          editandoUser.id,
-          editandoUser.email,
-          nomeTrim,
-          empresa.id,
-          form.colaborador
-        );
-        const antigas = (editandoUser.empresas || []).filter((x) => x.id !== empresa.id);
+        if (empresa) {
+          await sincronizarMembro(
+            editandoUser.id,
+            editandoUser.email,
+            nomeTrim,
+            empresa.id,
+            form.colaborador
+          );
+        }
+        const antigas = (editandoUser.empresas || []).filter((x) => x.id !== empresa?.id);
         await Promise.all(antigas.map((antiga) =>
           deleteDoc(doc(db, 'empresas', antiga.id, 'membros', editandoUser.id)).catch(() => {})
         ));
@@ -424,26 +446,25 @@ function AdminUsuarios() {
           displayName: nomeTrim,
           isAdmin: false,
           bloqueado: false,
-          empresas: [{
-            id: empresa.id,
-            nome: empresa.nome,
-            colaborador: Boolean(form.colaborador)
-          }],
+          criouEmpresa: false,
+          empresas: empresasUser,
           createdAt: new Date(),
           createdBy: currentUser.uid
         });
-        await sincronizarMembro(
-          uid,
-          emailNorm,
-          nomeTrim,
-          empresa.id,
-          form.colaborador
-        );
+        if (empresa) {
+          await sincronizarMembro(
+            uid,
+            emailNorm,
+            nomeTrim,
+            empresa.id,
+            form.colaborador
+          );
+        }
         setSuccess('Usuário criado. Ele já pode entrar com o email e a senha definidos.');
       }
       setShowUserModal(false);
       resetUserForm();
-      setEmpresaSelecionadaId(empresa.id);
+      if (empresa) setEmpresaSelecionadaId(empresa.id);
       await carregar();
       await recarregarPerfil();
     } catch (err) {
@@ -479,7 +500,7 @@ function AdminUsuarios() {
       return {
         ...u,
         colaborador: Boolean(vinculo?.colaborador),
-        empresaNome: empresa?.nome || vinculo?.nome || '—'
+        empresaNome: empresa?.nome || vinculo?.nome || 'Sem empresa'
       };
     })
     .sort((a, b) => String(a.displayName || a.email || '').localeCompare(String(b.displayName || b.email || ''), 'pt-BR'));
@@ -526,23 +547,37 @@ function AdminUsuarios() {
       <div className="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
         <div>
           <h1><FaBuilding className="me-2" />Administração</h1>
-          <p className="text-muted mb-0">Empresas, usuários vinculados e permissões</p>
+          <p className="text-muted mb-0">Empresas, usuários, permissões e log de acessos</p>
         </div>
         <div className="d-flex gap-2 flex-wrap">
           <Button variant="outline-primary" onClick={abrirNovaEmpresa}>
             <FaPlus className="me-2" />
             Nova empresa
           </Button>
-          <Button onClick={abrirNovoUser} disabled={empresasAtivas.length === 0}>
+          <Button onClick={abrirNovoUser}>
             <FaUserPlus className="me-2" />
             Novo usuário
           </Button>
           <Button
+            variant={vista === 'empresas' ? 'primary' : 'outline-secondary'}
+            onClick={() => setVista('empresas')}
+          >
+            <FaBuilding className="me-2" />
+            Empresas
+          </Button>
+          <Button
             variant={vista === 'usuarios' ? 'primary' : 'outline-secondary'}
-            onClick={() => setVista((v) => (v === 'usuarios' ? 'empresas' : 'usuarios'))}
+            onClick={() => setVista('usuarios')}
           >
             <FaUsers className="me-2" />
-            {vista === 'usuarios' ? 'Ver empresas' : 'Todos os usuários'}
+            Usuários
+          </Button>
+          <Button
+            variant={vista === 'logs' ? 'primary' : 'outline-secondary'}
+            onClick={() => setVista('logs')}
+          >
+            <FaHistory className="me-2" />
+            Log de acessos
           </Button>
         </div>
       </div>
@@ -550,7 +585,9 @@ function AdminUsuarios() {
       {error && <Alert variant="danger" dismissible onClose={() => setError('')}>{error}</Alert>}
       {success && <Alert variant="success" dismissible onClose={() => setSuccess('')}>{success}</Alert>}
 
-      {vista === 'usuarios' ? (
+      {vista === 'logs' ? (
+        <AdminLogs />
+      ) : vista === 'usuarios' ? (
       <Card>
         <Card.Header>
           <FaUsers className="me-2" />
@@ -580,9 +617,11 @@ function AdminUsuarios() {
                     <td>{u.empresaNome}</td>
                     <td>{formatarDataCriacao(u.createdAt)}</td>
                     <td>
-                      {u.colaborador
-                        ? <Badge bg="primary">Colaborador</Badge>
-                        : <Badge bg="secondary">Somente leitura</Badge>}
+                      {(u.empresas || []).length === 0
+                        ? <Badge bg="light" text="dark">Sem vínculo</Badge>
+                        : u.colaborador
+                          ? <Badge bg="primary">Colaborador</Badge>
+                          : <Badge bg="secondary">Somente leitura</Badge>}
                     </td>
                     <td>
                       {u.bloqueado
@@ -778,7 +817,7 @@ function AdminUsuarios() {
               <Form.Label>CNPJ</Form.Label>
               <Form.Control
                 value={formEmpresa.cnpj}
-                onChange={(e) => setFormEmpresa({ ...formEmpresa, cnpj: e.target.value })}
+                onChange={(e) => setFormEmpresa({ ...formEmpresa, cnpj: formatarCnpj(e.target.value) })}
                 placeholder="00.000.000/0000-00"
               />
             </Form.Group>
@@ -836,24 +875,31 @@ function AdminUsuarios() {
               <Form.Select
                 value={form.empresaId}
                 onChange={(e) => setForm({ ...form, empresaId: e.target.value })}
-                required
               >
-                <option value="">Selecione...</option>
+                <option value="">Nenhuma (sem vínculo)</option>
                 {empresasAtivas.map((e) => (
                   <option key={e.id} value={e.id}>{e.nome}</option>
                 ))}
               </Form.Select>
             </Form.Group>
-            <Form.Check
-              type="switch"
-              id="colaborador-switch"
-              label="Colaborador (pode criar, editar e excluir)"
-              checked={form.colaborador}
-              onChange={(e) => setForm({ ...form, colaborador: e.target.checked })}
-            />
-            <p className="text-muted small mt-2 mb-0">
-              Sem a opção colaborador, o usuário só visualiza os dados da empresa.
-            </p>
+            {form.empresaId ? (
+              <>
+                <Form.Check
+                  type="switch"
+                  id="colaborador-switch"
+                  label="Colaborador (pode criar, editar e excluir)"
+                  checked={form.colaborador}
+                  onChange={(e) => setForm({ ...form, colaborador: e.target.checked })}
+                />
+                <p className="text-muted small mt-2 mb-0">
+                  Sem a opção colaborador, o usuário só visualiza os dados da empresa.
+                </p>
+              </>
+            ) : (
+              <p className="text-muted small mb-0">
+                Sem empresa, o usuário entra no sistema e cria ou acessa uma empresa no primeiro login.
+              </p>
+            )}
           </Modal.Body>
           <Modal.Footer>
             <Button variant="secondary" onClick={() => { setShowUserModal(false); resetUserForm(); }}>

@@ -9,6 +9,7 @@ import Navbar from './components/Navbar';
 import Home from './components/Home';
 import Assinar from './components/Assinar';
 import AssinarSucesso from './components/AssinarSucesso';
+import AssinaturaNecessaria from './components/AssinaturaNecessaria';
 import Dashboard from './components/Dashboard';
 import Insumos from './components/Insumos';
 import Composicoes from './components/Composicoes';
@@ -19,6 +20,7 @@ import Comparativo from './components/Comparativo';
 import Login from './components/Login';
 import SelecaoEmpresa from './components/SelecaoEmpresa';
 import AdminUsuarios from './components/AdminUsuarios';
+import ActivityLogger from './components/ActivityLogger';
 import { AuthProvider } from './contexts/AuthContext';
 import { EmpresaProvider } from './contexts/EmpresaContext';
 import PrivateRoute from './components/PrivateRoute';
@@ -34,11 +36,17 @@ function App() {
         <EmpresaProvider>
           <div className="App">
             <Navbar />
+            <ActivityLogger />
             <Routes>
               <Route path="/" element={<Home />} />
               <Route path="/assinar" element={<Assinar />} />
               <Route path="/assinar/sucesso" element={<AssinarSucesso />} />
               <Route path="/login" element={<Login />} />
+              <Route path="/assinatura-necessaria" element={
+                <PrivateRoute requireEmpresa={false} allowTrialExpirado>
+                  <AssinaturaNecessaria />
+                </PrivateRoute>
+              } />
               <Route path="/empresas" element={
                 <PrivateRoute requireEmpresa={false}>
                   <AppShell>
