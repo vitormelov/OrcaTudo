@@ -6,7 +6,7 @@ import { FaBuilding, FaArrowRight, FaPlus, FaSearch } from 'react-icons/fa';
 import { db } from '../firebase/config';
 import { useAuth } from '../contexts/AuthContext';
 import { useEmpresa } from '../contexts/EmpresaContext';
-import { formatarCnpj } from '../utils/documentoFiscal';
+import { formatarCpf, formatarCpfCnpj, soDigitos } from '../utils/documentoFiscal';
 
 const ESTADOS = [
   'AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA',
@@ -56,7 +56,8 @@ function SelecaoEmpresa() {
   const [modo, setModo] = useState(''); // '' | 'criar' | 'entrar'
   const [formEmpresa, setFormEmpresa] = useState({
     ...FORM_EMPRESA_INICIAL,
-    nome: perfil?.nomeEmpresaSugerida || ''
+    nome: perfil?.nomeEmpresaSugerida || '',
+    cnpj: formatarCpf(perfil?.cpf || perfil?.cpfCnpj || '')
   });
   const [cnpjBusca, setCnpjBusca] = useState('');
   const [empresaEncontrada, setEmpresaEncontrada] = useState(null);
@@ -64,12 +65,18 @@ function SelecaoEmpresa() {
   const jaCriouEmpresa = Boolean(perfil?.criouEmpresa);
 
   useEffect(() => {
-    setFormEmpresa((prev) => (
-      prev.nome || !perfil?.nomeEmpresaSugerida
-        ? prev
-        : { ...prev, nome: perfil.nomeEmpresaSugerida }
-    ));
-  }, [perfil?.nomeEmpresaSugerida]);
+    const cpfUsuario = soDigitos(perfil?.cpf || perfil?.cpfCnpj);
+    setFormEmpresa((prev) => {
+      const next = { ...prev };
+      if (!prev.nome && perfil?.nomeEmpresaSugerida) {
+        next.nome = perfil.nomeEmpresaSugerida;
+      }
+      if (!soDigitos(prev.cnpj) && cpfUsuario.length === 11) {
+        next.cnpj = formatarCpf(cpfUsuario);
+      }
+      return next;
+    });
+  }, [perfil?.nomeEmpresaSugerida, perfil?.cpf, perfil?.cpfCnpj]);
 
   useEffect(() => {
     let cancelado = false;
@@ -203,7 +210,7 @@ function SelecaoEmpresa() {
       <div className="mb-4">
         <h1><FaBuilding className="me-2" />Selecionar empresa</h1>
         <p className="text-muted mb-0">
-          Entre em uma empresa da lista, crie a sua (apenas uma) ou acesse outra pelo CNPJ.
+          Entre em uma empresa da lista, crie a sua (apenas uma) ou acesse outra pelo CPF ou CNPJ.
         </p>
       </div>
 
@@ -211,7 +218,7 @@ function SelecaoEmpresa() {
 
       {listaEmpresas.length === 0 && !isAdmin && (
         <Alert variant="info">
-          É preciso criar uma empresa ou acessar uma existente pelo CNPJ para começar.
+          É preciso criar uma empresa ou acessar uma existente pelo CPF ou CNPJ para começar.
         </Alert>
       )}
 
@@ -255,8 +262,8 @@ function SelecaoEmpresa() {
                 <h5 className="mb-2"><FaPlus className="me-2" />Criar empresa</h5>
                 <p className="text-muted small">
                   {jaCriouEmpresa
-                    ? 'Você já criou sua empresa. Para outras, use o CNPJ.'
-                    : 'Nome, e-mail e CNPJ são obrigatórios. Só é possível criar uma empresa.'}
+                    ? 'Você já criou sua empresa. Para outras, use o CPF ou CNPJ.'
+                    : 'Nome, e-mail e CPF ou CNPJ são obrigatórios. Sem CNPJ, use o seu CPF.'}
                 </p>
                 <Button
                   variant="outline-primary"
@@ -273,14 +280,14 @@ function SelecaoEmpresa() {
               <Card.Body>
                 <h5 className="mb-2"><FaSearch className="me-2" />Acessar empresa</h5>
                 <p className="text-muted small">
-                  Informe o CNPJ exato da empresa para se juntar a ela.
+                  Informe o CPF ou CNPJ exato da empresa para se juntar a ela.
                 </p>
                 <Button
                   variant="outline-primary"
                   disabled={loading}
                   onClick={() => { setModo('entrar'); setError(''); setEmpresaEncontrada(null); }}
                 >
-                  Entrar com CNPJ
+                  Entrar com CPF ou CNPJ
                 </Button>
               </Card.Body>
             </Card>
@@ -312,13 +319,16 @@ function SelecaoEmpresa() {
                 </Col>
                 <Col md={6}>
                   <Form.Group>
-                    <Form.Label>CNPJ</Form.Label>
+                    <Form.Label>CPF ou CNPJ</Form.Label>
                     <Form.Control
                       value={formEmpresa.cnpj}
-                      onChange={(e) => atualizarForm('cnpj', formatarCnpj(e.target.value))}
+                      onChange={(e) => atualizarForm('cnpj', formatarCpfCnpj(e.target.value))}
                       required
-                      placeholder="00.000.000/0000-00"
+                      placeholder="Seu CPF ou o CNPJ da empresa"
                     />
+                    <Form.Text className="text-muted">
+                      Se você não tem empresa com CNPJ, use o seu próprio CPF.
+                    </Form.Text>
                   </Form.Group>
                 </Col>
                 <Col md={6}>
@@ -427,16 +437,16 @@ function SelecaoEmpresa() {
 
       {modo === 'entrar' && (
         <Card className="mb-4">
-          <Card.Header>Acessar empresa pelo CNPJ</Card.Header>
+          <Card.Header>Acessar empresa pelo CPF ou CNPJ</Card.Header>
           <Card.Body>
             <Form onSubmit={handleBuscarCnpj} className="mb-3">
               <Form.Group className="mb-3" style={{ maxWidth: 320 }}>
-                <Form.Label>CNPJ</Form.Label>
+                <Form.Label>CPF ou CNPJ</Form.Label>
                 <Form.Control
                   value={cnpjBusca}
-                  onChange={(e) => setCnpjBusca(formatarCnpj(e.target.value))}
+                  onChange={(e) => setCnpjBusca(formatarCpfCnpj(e.target.value))}
                   required
-                  placeholder="00.000.000/0000-00"
+                  placeholder="000.000.000-00 ou 00.000.000/0000-00"
                 />
               </Form.Group>
               <div className="d-flex gap-2">
@@ -453,7 +463,7 @@ function SelecaoEmpresa() {
               <Alert variant="secondary" className="mb-0">
                 <div className="fw-semibold">{empresaEncontrada.nome}</div>
                 <div className="small text-muted">
-                  CNPJ {formatarCnpj(empresaEncontrada.cnpj)}
+                  {formatarCpfCnpj(empresaEncontrada.cnpj)}
                 </div>
                 {empresaEncontrada.email && (
                   <div className="small text-muted">{empresaEncontrada.email}</div>

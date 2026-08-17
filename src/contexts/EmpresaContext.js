@@ -16,7 +16,7 @@ import { db } from '../firebase/config';
 import { useAuth } from './AuthContext';
 import { EMPRESA_STORAGE_KEY, EMPRESA_NOME_STORAGE_KEY } from '../constants/admin';
 import { registrarLog } from '../utils/activityLog';
-import { soDigitos, validarCnpj } from '../utils/documentoFiscal';
+import { soDigitos, validarCpf, validarCpfCnpj, tipoDocumento } from '../utils/documentoFiscal';
 
 const EmpresaContext = createContext();
 
@@ -159,25 +159,43 @@ export function EmpresaProvider({ children }) {
       throw new Error(`Já existe uma empresa com o nome "${nomeTrim}".`);
     }
     const extras = typeof dados === 'object' && dados ? dados : {};
-    const cnpj = soDigitos(extras.cnpj || '');
+    const documento = soDigitos(extras.cnpj || '');
+    if (documento && !validarCpfCnpj(documento)) {
+      throw new Error('Informe um CNPJ ou CPF válido.');
+    }
+    if (documento) {
+      const idx = await getDoc(doc(db, 'empresasPorCnpj', documento));
+      if (idx.exists()) {
+        throw new Error(`Já existe uma empresa cadastrada com este ${tipoDocumento(documento) || 'documento'}.`);
+      }
+    }
     const ref = await addDoc(collection(db, 'empresas'), {
       nome: nomeTrim,
       endereco: String(extras.endereco || '').trim(),
       telefone: String(extras.telefone || '').trim(),
       email: String(extras.email || '').trim().toLowerCase(),
-      cnpj,
+      cnpj: documento,
+      tipoDocumento: tipoDocumento(documento) || '',
       bloqueada: false,
       createdAt: new Date(),
       createdBy: currentUser.uid
     });
-    if (cnpj.length === 14) {
-      await setDoc(doc(db, 'empresasPorCnpj', cnpj), {
-        empresaId: ref.id,
-        nome: nomeTrim,
-        email: String(extras.email || '').trim().toLowerCase(),
-        createdBy: currentUser.uid,
-        createdAt: new Date()
-      });
+    if (documento) {
+      try {
+        await setDoc(doc(db, 'empresasPorCnpj', documento), {
+          empresaId: ref.id,
+          nome: nomeTrim,
+          email: String(extras.email || '').trim().toLowerCase(),
+          createdBy: currentUser.uid,
+          createdAt: new Date()
+        });
+      } catch (e) {
+        await deleteDoc(doc(db, 'empresas', ref.id)).catch(() => {});
+        if (e?.code === 'permission-denied') {
+          throw new Error('Sem permissão para gravar o CPF/CNPJ. Publique as regras do Firestore e tente de novo.');
+        }
+        throw e;
+      }
     }
     return { id: ref.id, nome: nomeTrim };
   };
@@ -185,18 +203,26 @@ export function EmpresaProvider({ children }) {
   const criarMinhaEmpresa = async (dados) => {
     if (!currentUser?.uid) throw new Error('Faça login para criar uma empresa.');
     if (perfil?.criouEmpresa) {
-      throw new Error('Você já criou uma empresa. Para outras, entre pelo CNPJ.');
+      throw new Error('Você já criou uma empresa. Para outras, entre pelo CPF ou CNPJ.');
     }
     const nomeTrim = String(dados?.nome || '').trim();
     const emailTrim = String(dados?.email || '').trim().toLowerCase();
-    const cnpj = soDigitos(dados?.cnpj);
+    const documento = soDigitos(dados?.cnpj);
     if (!nomeTrim) throw new Error('Informe o nome da empresa.');
     if (!emailTrim) throw new Error('Informe o e-mail da empresa.');
-    if (!validarCnpj(cnpj)) throw new Error('Informe um CNPJ válido.');
+    if (!validarCpfCnpj(documento)) {
+      throw new Error('Informe um CNPJ válido ou o seu CPF.');
+    }
+    if (validarCpf(documento)) {
+      const cpfUsuario = soDigitos(perfil?.cpf || perfil?.cpfCnpj);
+      if (cpfUsuario && documento !== cpfUsuario) {
+        throw new Error('Para cadastrar sem CNPJ, use o seu próprio CPF.');
+      }
+    }
 
-    const idx = await getDoc(doc(db, 'empresasPorCnpj', cnpj));
+    const idx = await getDoc(doc(db, 'empresasPorCnpj', documento));
     if (idx.exists()) {
-      throw new Error('Já existe uma empresa cadastrada com este CNPJ. Use “Acessar empresa”.');
+      throw new Error(`Já existe uma empresa cadastrada com este ${tipoDocumento(documento)}. Use “Acessar empresa”.`);
     }
 
     const agora = new Date();
@@ -207,7 +233,8 @@ export function EmpresaProvider({ children }) {
       endereco,
       telefone,
       email: emailTrim,
-      cnpj,
+      cnpj: documento,
+      tipoDocumento: tipoDocumento(documento),
       bloqueada: false,
       origem: 'usuario',
       createdAt: agora,
@@ -215,7 +242,7 @@ export function EmpresaProvider({ children }) {
     });
 
     try {
-      await setDoc(doc(db, 'empresasPorCnpj', cnpj), {
+      await setDoc(doc(db, 'empresasPorCnpj', documento), {
         empresaId: ref.id,
         nome: nomeTrim,
         email: emailTrim,
@@ -224,7 +251,7 @@ export function EmpresaProvider({ children }) {
       });
     } catch (e) {
       await deleteDoc(doc(db, 'empresas', ref.id)).catch(() => {});
-      throw new Error('Já existe uma empresa cadastrada com este CNPJ. Use “Acessar empresa”.');
+      throw new Error(`Já existe uma empresa cadastrada com este ${tipoDocumento(documento)}. Use “Acessar empresa”.`);
     }
 
     await setDoc(doc(db, 'empresas', ref.id, 'membros', currentUser.uid), {
@@ -258,13 +285,13 @@ export function EmpresaProvider({ children }) {
   };
 
   const buscarEmpresaPorCnpj = async (cnpjRaw) => {
-    const cnpj = soDigitos(cnpjRaw);
-    if (!validarCnpj(cnpj)) throw new Error('Informe um CNPJ válido.');
-    const snap = await getDoc(doc(db, 'empresasPorCnpj', cnpj));
+    const documento = soDigitos(cnpjRaw);
+    if (!validarCpfCnpj(documento)) throw new Error('Informe um CPF ou CNPJ válido.');
+    const snap = await getDoc(doc(db, 'empresasPorCnpj', documento));
     if (!snap.exists()) {
-      throw new Error('Nenhuma empresa encontrada com este CNPJ.');
+      throw new Error('Nenhuma empresa encontrada com este CPF ou CNPJ.');
     }
-    return { cnpj, ...snap.data() };
+    return { cnpj: documento, ...snap.data() };
   };
 
   const entrarPorCnpj = async (cnpjRaw) => {

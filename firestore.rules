@@ -100,17 +100,13 @@ service cloud.firestore {
     match /empresasPorCnpj/{cnpj} {
       allow get: if isSignedIn();
       allow list: if isAdmin();
-      allow create: if isAdmin() || (
-        isSignedIn()
+      allow write: if isAdmin();
+      allow create: if isSignedIn()
         && request.resource.data.createdBy == request.auth.uid
-        && cnpj.matches('^[0-9]{14}$')
+        && (cnpj.matches('^[0-9]{11}$') || cnpj.matches('^[0-9]{14}$'))
         && exists(/databases/$(database)/documents/usuarios/$(request.auth.uid))
-        && get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.criouEmpresa != true
-      );
-      allow update: if isAdmin() || (
-        isSignedIn() && resource.data.createdBy == request.auth.uid
-      );
-      allow delete: if isAdmin();
+        && get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.criouEmpresa != true;
+      allow update: if isSignedIn() && resource.data.createdBy == request.auth.uid;
     }
 
     match /logsAcesso/{logId} {

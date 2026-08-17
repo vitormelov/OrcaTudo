@@ -9,7 +9,7 @@ import { db } from '../firebase/config';
 import { useAuth } from '../contexts/AuthContext';
 import { useEmpresa } from '../contexts/EmpresaContext';
 import { isAdminEmail } from '../constants/admin';
-import { formatarCnpj, soDigitos } from '../utils/documentoFiscal';
+import { formatarCpfCnpj, soDigitos, tipoDocumento, validarCpfCnpj } from '../utils/documentoFiscal';
 import {
   FaUserPlus, FaUsers, FaBuilding, FaSave, FaEdit, FaTrash, FaBan, FaUnlock, FaPlus, FaHistory
 } from 'react-icons/fa';
@@ -138,7 +138,7 @@ function AdminUsuarios() {
       endereco: empresa.endereco || '',
       telefone: empresa.telefone || '',
       email: empresa.email || '',
-      cnpj: formatarCnpj(empresa.cnpj || '')
+      cnpj: formatarCpfCnpj(empresa.cnpj || '')
     });
     setShowEmpresaModal(true);
   };
@@ -147,12 +147,17 @@ function AdminUsuarios() {
     e.preventDefault();
     const nomeTrim = formEmpresa.nome.trim();
     const cnpjNovo = soDigitos(formEmpresa.cnpj);
+    if (cnpjNovo && !validarCpfCnpj(cnpjNovo)) {
+      setError('Informe um CPF ou CNPJ válido.');
+      return;
+    }
     const dadosEmpresa = {
       nome: nomeTrim,
       endereco: formEmpresa.endereco.trim(),
       telefone: formEmpresa.telefone.trim(),
       email: formEmpresa.email.trim().toLowerCase(),
-      cnpj: cnpjNovo
+      cnpj: cnpjNovo,
+      tipoDocumento: tipoDocumento(cnpjNovo) || ''
     };
     if (!nomeTrim) {
       setError('Informe o nome da empresa.');
@@ -178,7 +183,7 @@ function AdminUsuarios() {
         if (cnpjAntigo && cnpjAntigo !== cnpjNovo) {
           await deleteDoc(doc(db, 'empresasPorCnpj', cnpjAntigo)).catch(() => {});
         }
-        if (cnpjNovo.length === 14) {
+        if (validarCpfCnpj(cnpjNovo)) {
           await setDoc(doc(db, 'empresasPorCnpj', cnpjNovo), {
             empresaId: editandoEmpresa.id,
             nome: nomeTrim,
@@ -268,7 +273,7 @@ function AdminUsuarios() {
         })
       ));
       const cnpj = soDigitos(empresa.cnpj);
-      if (cnpj.length === 14) {
+      if (validarCpfCnpj(cnpj)) {
         await deleteDoc(doc(db, 'empresasPorCnpj', cnpj)).catch(() => {});
       }
       await deleteDoc(doc(db, 'empresas', empresa.id));
@@ -549,31 +554,33 @@ function AdminUsuarios() {
           <h1><FaBuilding className="me-2" />Administração</h1>
           <p className="text-muted mb-0">Empresas, usuários, permissões e log de acessos</p>
         </div>
-        <div className="d-flex gap-2 flex-wrap">
+        <div className="d-flex gap-2 flex-wrap align-items-center">
           <Button variant="outline-primary" onClick={abrirNovaEmpresa}>
             <FaPlus className="me-2" />
             Nova empresa
           </Button>
-          <Button onClick={abrirNovoUser}>
+          <Button variant="outline-primary" onClick={abrirNovoUser}>
             <FaUserPlus className="me-2" />
             Novo usuário
           </Button>
+          <span className="admin-toolbar-sep" aria-hidden="true" />
           <Button
-            variant={vista === 'empresas' ? 'primary' : 'outline-secondary'}
+            variant={vista === 'empresas' ? 'primary' : 'outline-primary'}
             onClick={() => setVista('empresas')}
           >
             <FaBuilding className="me-2" />
             Empresas
           </Button>
           <Button
-            variant={vista === 'usuarios' ? 'primary' : 'outline-secondary'}
+            variant={vista === 'usuarios' ? 'primary' : 'outline-primary'}
             onClick={() => setVista('usuarios')}
           >
             <FaUsers className="me-2" />
             Usuários
           </Button>
+          <span className="admin-toolbar-sep" aria-hidden="true" />
           <Button
-            variant={vista === 'logs' ? 'primary' : 'outline-secondary'}
+            variant={vista === 'logs' ? 'primary' : 'outline-primary'}
             onClick={() => setVista('logs')}
           >
             <FaHistory className="me-2" />
@@ -814,11 +821,11 @@ function AdminUsuarios() {
               />
             </Form.Group>
             <Form.Group className="mb-0">
-              <Form.Label>CNPJ</Form.Label>
+              <Form.Label>CPF ou CNPJ</Form.Label>
               <Form.Control
                 value={formEmpresa.cnpj}
-                onChange={(e) => setFormEmpresa({ ...formEmpresa, cnpj: formatarCnpj(e.target.value) })}
-                placeholder="00.000.000/0000-00"
+                onChange={(e) => setFormEmpresa({ ...formEmpresa, cnpj: formatarCpfCnpj(e.target.value) })}
+                placeholder="CPF ou CNPJ da empresa"
               />
             </Form.Group>
           </Modal.Body>

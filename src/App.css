@@ -231,6 +231,15 @@ label,
   border-color: var(--color-primary);
 }
 
+.admin-toolbar-sep {
+  display: inline-block;
+  width: 1px;
+  height: 1.6rem;
+  background: currentColor;
+  opacity: 0.25;
+  margin: 0 0.15rem;
+}
+
 .btn-outline-primary:hover,
 .btn-outline-primary:focus,
 .btn-outline-primary:active {
