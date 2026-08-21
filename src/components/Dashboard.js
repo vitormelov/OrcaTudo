@@ -8,6 +8,7 @@ import { useEmpresa } from '../contexts/EmpresaContext';
 import { formatCurrency } from '../utils/formatters';
 import { formatRevisao, getRevisao } from '../utils/eapCopy';
 import { totalDoNo, calcularValorTotal } from '../utils/eapTree';
+import { calcularValorComBdi } from '../utils/bdi';
 import {
   FaFileInvoiceDollar,
   FaPlus,
@@ -21,11 +22,7 @@ import {
 const STATUS_ORCAMENTO = ['Em Análise', 'Aprovado', 'Rejeitado', 'Em Execução', 'Concluído'];
 
 function valorComBDI(orcamento) {
-  const base = orcamento.valorTotal || 0;
-  if (!orcamento.bdiConfig) return base;
-  const { lucro = 0, tributos = 0, financeiro = 0, garantias = 0 } = orcamento.bdiConfig;
-  const bdi = (1 + lucro / 100) * (1 + tributos / 100) * (1 + financeiro / 100) * (1 + garantias / 100) - 1;
-  return base * (1 + bdi);
+  return calcularValorComBdi(orcamento.valorTotal || 0, orcamento.bdiConfig);
 }
 
 function getStatusColor(status) {

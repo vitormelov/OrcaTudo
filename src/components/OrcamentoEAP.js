@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Modal, Form, Alert, InputGroup, Button } from 'react-bootstrap';
+import { Modal, Form, Alert, InputGroup, Button, Row, Col } from 'react-bootstrap';
 import { formatCurrency } from '../utils/formatters';
 import { collection, getDocs, updateDoc, doc, query, where, getDoc, addDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
@@ -7,12 +7,23 @@ import { useAuth } from '../contexts/AuthContext';
 import { useEmpresa } from '../contexts/EmpresaContext';
 import { useParams, useNavigate } from 'react-router-dom';
 import { 
-  migrarEapAntigo, stripUidsForSave, getCompsDoNo, calcularValorTotal, newId
+  migrarEapAntigo, stripUidsForSave, getCompsDoNo, calcularValorTotal, newId,
+  sincronizarComposicoesComCatalogo
 } from '../utils/eapTree';
 import { copiarEAPCompleta, formatRevisao, getObraId, getRevisao } from '../utils/eapCopy';
 import { exportarEapPlanilhaOrcamento } from '../utils/eapExcelExport';
 import { exportarEapPlanilhaPdf } from '../utils/eapPdfExport';
+import { SECOES_PDF_PADRAO } from '../utils/eapComposicoesDetalhe';
+import { calcularBdiPercent, calcularValorComBdi, memoriaCalculoBdi, BDI_CAMPOS } from '../utils/bdi';
 import EapWorkspace from './eap/EapWorkspace';
+
+function pctBr(valor) {
+  return `${Number(valor).toFixed(2).replace('.', ',')}%`;
+}
+
+function fatorBr(valor) {
+  return Number(valor).toFixed(4).replace('.', ',');
+}
 
 const formatarDataAmigavel = (dataISO) => {
   if (!dataISO) return '';
@@ -76,6 +87,9 @@ function OrcamentoEAP() {
 
   const [showBdi, setShowBdi] = useState(false);
   const [bdiConfig, setBdiConfig] = useState({ lucro: 10, tributos: 8, financeiro: 2, garantias: 1 });
+  const [showExportPdf, setShowExportPdf] = useState(false);
+  const [exportPdfModoVenda, setExportPdfModoVenda] = useState(false);
+  const [exportPdfSecoes, setExportPdfSecoes] = useState({ ...SECOES_PDF_PADRAO });
 
   useEffect(() => {
     if (currentUser && orcamentoId && empresaId) carregar();
@@ -157,12 +171,9 @@ function OrcamentoEAP() {
   }, [temAlteracoesNaoSalvas]);
 
   const valorTotal = calcularValorTotal(orcamento?.composicoes);
-  const calcularBDI = () => {
-    const bdi = (1 + bdiConfig.lucro / 100) * (1 + bdiConfig.tributos / 100)
-      * (1 + bdiConfig.financeiro / 100) * (1 + bdiConfig.garantias / 100) - 1;
-    return bdi * 100;
-  };
-  const valorComBDI = valorTotal + valorTotal * (calcularBDI() / 100);
+  const calcularBDI = () => calcularBdiPercent(bdiConfig);
+  const valorComBDI = calcularValorComBdi(valorTotal, bdiConfig);
+  const memoriaBdi = memoriaCalculoBdi(bdiConfig, valorTotal);
 
   const calcularSubvalores = (composicao) => {
     const subvalores = { Material: 0, 'Mão de Obra': 0, Equipamento: 0, Serviço: 0 };
@@ -393,7 +404,12 @@ function OrcamentoEAP() {
                   quantidade,
                   custoUnitario,
                   custoTotal,
-                  insumos: catalogo.insumos || []
+                  insumos: catalogo.insumos || [],
+                  quantidadeFormula:
+                    c.quantidadeFormula &&
+                    Math.abs((parseFloat(c.quantidade) || 0) - quantidade) < 1e-9
+                      ? c.quantidadeFormula
+                      : null
                 }
               : c
           )
@@ -420,15 +436,57 @@ function OrcamentoEAP() {
     setShowModalComp(false);
   };
 
-  const atualizarQtdInline = (uid, quantidade) => {
+  const atualizarQtdInline = (uid, quantidade, opts = {}) => {
     const q = parseFloat(quantidade);
     if (Number.isNaN(q) || q < 0) return;
+    const { formula } = opts;
     setOrcamento((prev) => ({
       ...prev,
-      composicoes: (prev.composicoes || []).map((c) =>
-        c.uid === uid ? { ...c, quantidade: q, custoTotal: q * (c.custoUnitario || 0) } : c
-      )
+      composicoes: (prev.composicoes || []).map((c) => {
+        if (c.uid !== uid) return c;
+        const next = {
+          ...c,
+          quantidade: q,
+          custoTotal: q * (c.custoUnitario || 0)
+        };
+        if (typeof formula === 'string' && formula.trim()) {
+          next.quantidadeFormula = formula.trim();
+        } else {
+          next.quantidadeFormula = null;
+        }
+        return next;
+      })
     }));
+  };
+
+  const atualizarValoresCatalogo = async () => {
+    if (!orcamento || somenteLeitura || !empresaId) return;
+    setLoading(true);
+    setError('');
+    setSuccess('');
+    try {
+      const [compsSnap, insumosSnap] = await Promise.all([
+        getDocs(query(collection(db, 'composicoes'), where('empresaId', '==', empresaId))),
+        getDocs(query(collection(db, 'insumos'), where('empresaId', '==', empresaId)))
+      ]);
+      const catalogoAtual = compsSnap.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR'));
+      const insumosAtual = insumosSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+      setCatalogoComposicoes(catalogoAtual);
+      setInsumos(insumosAtual);
+      setOrcamento((prev) => ({
+        ...prev,
+        composicoes: sincronizarComposicoesComCatalogo(prev.composicoes, catalogoAtual, insumosAtual)
+      }));
+      setSuccess('Composições e valores atualizados com o catálogo atual. Clique em Salvar EAP para gravar.');
+    } catch (e) {
+      console.error(e);
+      setError('Não foi possível atualizar os valores do orçamento.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const salvarEAP = async () => {
@@ -588,19 +646,44 @@ function OrcamentoEAP() {
         orcamento.elaboradoPor ||
         '',
       status: orcamento.status || '',
+      catalogoComposicoes,
+      insumos,
       ...extras
     };
   };
 
-  const exportarEAPPdf = () => {
+  const abrirExportPdf = (modoVenda = false) => {
     if (!orcamento) return;
+    if (modoVenda && !orcamento.bdiConfig) {
+      alert('Configure e aplique o BDI antes de gerar a planilha de venda.');
+      return;
+    }
+    setExportPdfModoVenda(Boolean(modoVenda));
+    setExportPdfSecoes({ ...SECOES_PDF_PADRAO });
+    setShowExportPdf(true);
+  };
+
+  const confirmarExportPdf = () => {
+    if (!orcamento) return;
+    if (!Object.values(exportPdfSecoes).some(Boolean)) {
+      alert('Selecione ao menos uma seção para exportar.');
+      return;
+    }
     try {
-      exportarEapPlanilhaPdf(montarPayloadExportacao());
+      const extras = { secoes: exportPdfSecoes };
+      if (exportPdfModoVenda) {
+        extras.modoVenda = true;
+        extras.fatorBdi = 1 + calcularBDI() / 100;
+      }
+      exportarEapPlanilhaPdf(montarPayloadExportacao(extras));
+      setShowExportPdf(false);
     } catch (e) {
       console.error(e);
-      alert('Erro ao gerar PDF');
+      alert(e?.message || 'Erro ao gerar PDF');
     }
   };
+
+  const exportarEAPPdf = () => abrirExportPdf(false);
 
   const exportarEAPExcel = () => {
     if (!orcamento) return;
@@ -618,11 +701,13 @@ function OrcamentoEAP() {
       alert('Configure e aplique o BDI antes de gerar a planilha de venda.');
       return;
     }
+    if (formato === 'pdf') {
+      abrirExportPdf(true);
+      return;
+    }
     try {
       const fatorBdi = 1 + calcularBDI() / 100;
-      const payload = montarPayloadExportacao({ modoVenda: true, fatorBdi });
-      if (formato === 'pdf') exportarEapPlanilhaPdf(payload);
-      else exportarEapPlanilhaOrcamento(payload);
+      exportarEapPlanilhaOrcamento(montarPayloadExportacao({ modoVenda: true, fatorBdi }));
     } catch (e) {
       console.error(e);
       alert(`Erro ao gerar planilha de venda (${formato.toUpperCase()})`);
@@ -675,6 +760,7 @@ function OrcamentoEAP() {
         removerComposicao={removerComposicao}
         atualizarQtdInline={atualizarQtdInline}
         salvarEAP={salvarEAP}
+        atualizarValoresCatalogo={atualizarValoresCatalogo}
         loading={loading}
         navigate={navigate}
         sairDaEap={sairDaEap}
@@ -755,20 +841,63 @@ function OrcamentoEAP() {
         </Form>
       </Modal>
 
-      <Modal show={showBdi} onHide={() => setShowBdi(false)}>
+      <Modal show={showBdi} onHide={() => setShowBdi(false)} size="lg">
         <Modal.Header closeButton><Modal.Title>Configurar BDI</Modal.Title></Modal.Header>
         <Modal.Body>
-          {['lucro', 'tributos', 'financeiro', 'garantias'].map((campo) => (
-            <Form.Group className="mb-3" key={campo}>
-              <Form.Label className="text-capitalize">{campo} (%)</Form.Label>
-            <Form.Control
-                type="number" step="0.01" value={bdiConfig[campo]}
-                onChange={(e) => setBdiConfig({ ...bdiConfig, [campo]: parseFloat(e.target.value) || 0 })}
-            />
-          </Form.Group>
-          ))}
-          <Alert variant="info" className="mb-0">
-            BDI = {calcularBDI().toFixed(2)}% · Total c/ BDI: {formatCurrency(valorComBDI)}
+          <Row className="g-3 mb-3">
+            {BDI_CAMPOS.map(({ key, label, hint }) => (
+              <Col md={6} key={key}>
+                <Form.Group>
+                  <Form.Label>{label}</Form.Label>
+                  <Form.Control
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={bdiConfig[key]}
+                    onChange={(e) => setBdiConfig({ ...bdiConfig, [key]: parseFloat(e.target.value) || 0 })}
+                  />
+                  <Form.Text className="text-muted">{hint}</Form.Text>
+                </Form.Group>
+              </Col>
+            ))}
+          </Row>
+
+          <Alert variant="light" className="mb-0 border">
+            <div className="small text-muted mb-2">
+              Fórmula de referência (TCU 2622/2013, simplificada):
+            </div>
+            <div className="fw-semibold mb-3 font-monospace" style={{ fontSize: '0.95rem' }}>
+              BDI = [(1 + G) × (1 + DF) × (1 + L) / (1 − T)] − 1
+            </div>
+            <div className="small mb-3">
+              Os tributos (T) ficam no denominador porque incidem sobre o preço de venda,
+              não sobre o custo direto. O preço final é: <strong>PV = Custo direto × (1 + BDI)</strong>.
+            </div>
+
+            <div className="small">
+              <div className="mb-1">(1 + G) = (1 + {pctBr(memoriaBdi.g)}) = <strong>{fatorBr(memoriaBdi.fatorG)}</strong></div>
+              <div className="mb-1">(1 + DF) = (1 + {pctBr(memoriaBdi.df)}) = <strong>{fatorBr(memoriaBdi.fatorDf)}</strong></div>
+              <div className="mb-1">(1 + L) = (1 + {pctBr(memoriaBdi.l)}) = <strong>{fatorBr(memoriaBdi.fatorL)}</strong></div>
+              <div className="mb-1">(1 − T) = (1 − {pctBr(memoriaBdi.t)}) = <strong>{fatorBr(memoriaBdi.fatorT)}</strong></div>
+              <div className="mb-1 mt-2">
+                Numerador = {fatorBr(memoriaBdi.fatorG)} × {fatorBr(memoriaBdi.fatorDf)} × {fatorBr(memoriaBdi.fatorL)}
+                {' '}= <strong>{fatorBr(memoriaBdi.numerador)}</strong>
+              </div>
+              <div className="mb-1">
+                Fator de venda = {fatorBr(memoriaBdi.numerador)} / {fatorBr(memoriaBdi.fatorT)}
+                {' '}= <strong>{fatorBr(memoriaBdi.fatorVenda)}</strong>
+              </div>
+              <div className="mb-2">
+                BDI = {fatorBr(memoriaBdi.fatorVenda)} − 1 = <strong>{pctBr(memoriaBdi.bdiPercent)}</strong>
+              </div>
+              <div className="pt-2 border-top">
+                Custo direto: <strong>{formatCurrency(memoriaBdi.base)}</strong>
+                {' · '}
+                Valor do BDI: <strong>{formatCurrency(memoriaBdi.valorBdi)}</strong>
+                {' · '}
+                Total c/ BDI: <strong>{formatCurrency(memoriaBdi.valorComBdi)}</strong>
+              </div>
+            </div>
           </Alert>
         </Modal.Body>
         <Modal.Footer>
@@ -783,6 +912,83 @@ function OrcamentoEAP() {
             setOrcamento((prev) => ({ ...prev, bdiConfig }));
             setShowBdi(false);
           }}>Aplicar</Button>
+        </Modal.Footer>
+      </Modal>
+
+      <Modal show={showExportPdf} onHide={() => setShowExportPdf(false)} centered>
+        <Modal.Header closeButton>
+          <Modal.Title>
+            Exportar PDF
+            {exportPdfModoVenda ? ' · Planilha de venda' : ' · Planilha de custo'}
+          </Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <p className="text-muted small mb-3">
+            Escolha o que deseja incluir no arquivo:
+          </p>
+          <Form.Check
+            type="checkbox"
+            id="pdf-sec-eap"
+            className="mb-2"
+            label="EAP (planilha orçamentária)"
+            checked={exportPdfSecoes.eap}
+            onChange={(e) => setExportPdfSecoes((s) => ({ ...s, eap: e.target.checked }))}
+          />
+          <Form.Check
+            type="checkbox"
+            id="pdf-sec-comp"
+            className="mb-2"
+            label="Composições (detalhamento de insumos)"
+            checked={exportPdfSecoes.composicoes}
+            onChange={(e) => setExportPdfSecoes((s) => ({ ...s, composicoes: e.target.checked }))}
+          />
+          <Form.Check
+            type="checkbox"
+            id="pdf-sec-abc-comp"
+            className="mb-2"
+            label="Curva ABC — Composições"
+            checked={exportPdfSecoes.abcComposicao}
+            onChange={(e) => setExportPdfSecoes((s) => ({ ...s, abcComposicao: e.target.checked }))}
+          />
+          <Form.Check
+            type="checkbox"
+            id="pdf-sec-abc-ins"
+            className="mb-2"
+            label="Curva ABC — Insumos"
+            checked={exportPdfSecoes.abcInsumos}
+            onChange={(e) => setExportPdfSecoes((s) => ({ ...s, abcInsumos: e.target.checked }))}
+          />
+          <div className="mt-3 d-flex gap-2">
+            <Button
+              size="sm"
+              variant="outline-secondary"
+              onClick={() => setExportPdfSecoes({ ...SECOES_PDF_PADRAO })}
+            >
+              Marcar tudo
+            </Button>
+            <Button
+              size="sm"
+              variant="outline-secondary"
+              onClick={() => setExportPdfSecoes({
+                eap: false,
+                composicoes: false,
+                abcComposicao: false,
+                abcInsumos: false
+              })}
+            >
+              Desmarcar tudo
+            </Button>
+          </div>
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={() => setShowExportPdf(false)}>Cancelar</Button>
+          <Button
+            variant="primary"
+            onClick={confirmarExportPdf}
+            disabled={!Object.values(exportPdfSecoes).some(Boolean)}
+          >
+            Gerar PDF
+          </Button>
         </Modal.Footer>
       </Modal>
     </div>

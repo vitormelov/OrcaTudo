@@ -181,6 +181,66 @@ export function calcularValorTotal(composicoes) {
   return (composicoes || []).reduce((sum, c) => sum + (c.custoTotal || 0), 0);
 }
 
+/** Soma o custo unitário a partir da lista de insumos da composição. */
+function calcularCustoUnitarioDeInsumos(listaInsumos, insumos, fallback = 0) {
+  if (listaInsumos?.length) {
+    let total = 0;
+    listaInsumos.forEach((item) => {
+      const insumo = insumos.find((i) => i.id === item.insumoId);
+      if (!insumo) return;
+      total += (parseFloat(item.quantidade) || 0) * (insumo.precoUnitario || 0);
+    });
+    if (total > 0) return total;
+  }
+  return fallback ?? 0;
+}
+
+/** Custo unitário da composição com catálogo e preços atuais dos insumos. */
+export function calcularCustoUnitarioComposicao(comp, catalogoComposicoes, insumos) {
+  const catalogo = catalogoComposicoes.find((c) => c.id === comp.composicaoId);
+  const listaInsumos = catalogo?.insumos?.length
+    ? catalogo.insumos
+    : (comp.insumos || []);
+  return calcularCustoUnitarioDeInsumos(
+    listaInsumos,
+    insumos,
+    catalogo?.valorTotal ?? comp.custoUnitario ?? 0
+  );
+}
+
+/**
+ * Sincroniza cada composição da EAP com o catálogo atual
+ * (nome, código, unidade, insumos) e recalcula custos.
+ */
+export function sincronizarComposicoesComCatalogo(composicoes, catalogoComposicoes, insumos) {
+  return (composicoes || []).map((c) => {
+    const catalogo = catalogoComposicoes.find((cat) => cat.id === c.composicaoId);
+    const quantidade = parseFloat(c.quantidade) || 0;
+
+    if (!catalogo) {
+      const custoUnitario = calcularCustoUnitarioComposicao(c, catalogoComposicoes, insumos);
+      return { ...c, custoUnitario, custoTotal: quantidade * custoUnitario };
+    }
+
+    const insumosAtual = (catalogo.insumos || []).map((item) => ({ ...item }));
+    const custoUnitario = calcularCustoUnitarioDeInsumos(
+      insumosAtual,
+      insumos,
+      catalogo.valorTotal ?? c.custoUnitario ?? 0
+    );
+
+    return {
+      ...c,
+      codigo: catalogo.codigo || '',
+      nome: catalogo.nome || c.nome,
+      unidade: catalogo.unidade || c.unidade,
+      insumos: insumosAtual,
+      custoUnitario,
+      custoTotal: quantidade * custoUnitario
+    };
+  });
+}
+
 export function caminhoComposicao(pacotes, comp) {
   const pacote = (pacotes || []).find((p) => p.id === comp.pacoteId);
   if (!pacote) return '—';

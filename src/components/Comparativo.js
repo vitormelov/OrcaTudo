@@ -26,6 +26,7 @@ import {
   FaDollarSign
 } from 'react-icons/fa';
 import { formatCurrency, formatCurrencyValue } from '../utils/formatters';
+import { calcularValorComBdi } from '../utils/bdi';
 import {
   agruparPorObra,
   labelRevisao,
@@ -118,14 +119,7 @@ function Comparativo() {
   const valorTotal = (o) =>
     (o?.composicoes || []).reduce((s, c) => s + (c.custoTotal || 0), 0);
 
-  const valorComBDI = (o) => {
-    const base = valorTotal(o);
-    if (!o?.bdiConfig) return base;
-    const { lucro, tributos, financeiro, garantias } = o.bdiConfig;
-    const bdi =
-      (1 + lucro / 100) * (1 + tributos / 100) * (1 + financeiro / 100) * (1 + garantias / 100) - 1;
-    return base * (1 + bdi);
-  };
+  const valorComBDI = (o) => calcularValorComBdi(valorTotal(o), o?.bdiConfig);
 
   const corDelta = (d) => {
     if (!d || Math.abs(d) < 0.0001) return 'secondary';

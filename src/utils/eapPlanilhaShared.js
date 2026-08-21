@@ -69,8 +69,8 @@ export function buildEapTabelaRows({
     const mo = t.mo * fator;
     const total = t.total * fator;
     return [
-      no, '', descricao, '', null,
-      null, null, null,
+      no, '', descricao, '', '',
+      '', '', '',
       mat, mo, total,
       inc(total)
     ];
@@ -177,11 +177,11 @@ export function buildEapTabelaRows({
 
   if (modoVenda) {
     // Cliente vê só o total de venda — BDI já embutido nos unitários
-    push(['', '', 'VALOR DE VENDA', '', null, null, null, null, null, null, venda, null], 'footer');
+    push(['', '', 'VALOR DE VENDA', '', '', '', '', '', '', '', venda, ''], 'footer');
   } else {
-    push(['', '', 'CUSTO TOTAL', '', null, null, null, null, null, null, baseTotal, null], 'footer');
-    push(['', '', 'BDI', '', null, null, null, null, null, null, bdiAbs, null], 'footer');
-    push(['', '', 'VALOR DE VENDA', '', null, null, null, null, null, null, venda, null], 'footer');
+    push(['', '', 'CUSTO TOTAL', '', '', '', '', '', '', '', baseTotal, ''], 'footer');
+    push(['', '', 'BDI', '', '', '', '', '', '', '', bdiAbs, ''], 'footer');
+    push(['', '', 'VALOR DE VENDA', '', '', '', '', '', '', '', venda, ''], 'footer');
   }
 
   return { rows, baseTotal, bdiAbs, venda, fator };

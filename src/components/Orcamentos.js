@@ -29,6 +29,7 @@ import { FaPlus, FaEdit, FaTrash, FaSearch, FaFileInvoiceDollar, FaEye, FaCopy, 
 import { useNavigate } from 'react-router-dom';
 import { copiarEAPCompleta, formatRevisao, getObraId, getRevisao } from '../utils/eapCopy';
 import { formatCurrency } from '../utils/formatters';
+import { calcularValorComBdi } from '../utils/bdi';
 
 function Orcamentos() {
   const { currentUser } = useAuth();
@@ -382,20 +383,9 @@ function Orcamentos() {
     }
   };
 
-  // Função para calcular o valor total com BDI aplicado
   const calcularValorTotalComBDI = (orcamento) => {
     if (!orcamento.valorTotal || orcamento.valorTotal === 0) return 0;
-    
-    // Se não há configuração de BDI, retorna o valor original
-    if (!orcamento.bdiConfig) return orcamento.valorTotal;
-    
-    const { lucro, tributos, financeiro, garantias } = orcamento.bdiConfig;
-    
-    // Fórmula do BDI: (1 + lucro) × (1 + tributos) × (1 + financeiro) × (1 + garantias) - 1
-    const bdi = (1 + lucro/100) * (1 + tributos/100) * (1 + financeiro/100) * (1 + garantias/100) - 1;
-    
-    // Valor total com BDI aplicado
-    return orcamento.valorTotal * (1 + bdi);
+    return calcularValorComBdi(orcamento.valorTotal, orcamento.bdiConfig);
   };
 
   const toggleSort = (key) => {

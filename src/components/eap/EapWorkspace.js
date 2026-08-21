@@ -12,7 +12,7 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-
 import { CSS } from '@dnd-kit/utilities';
 import { restrictToVerticalAxis, snapCenterToCursor } from '@dnd-kit/modifiers';
 import {
-  FaPlus, FaTrash, FaSave, FaEdit,
+  FaPlus, FaTrash, FaSave, FaEdit, FaSync,
   FaChartBar, FaChartPie, FaFilePdf, FaCalculator, FaFileExcel, FaArrowLeft, FaGripVertical,
   FaChevronDown, FaChevronRight, FaCodeBranch
 } from 'react-icons/fa';
@@ -23,6 +23,7 @@ import {
   pacoteContainer, grupoContainer, subgrupoContainer, findByDragKey
 } from '../../utils/eapTree';
 import { getContainerItems, handleEapDragEnd } from '../../utils/eapDnD';
+import { avaliarExpressaoMatematica, arredondarQuantidade } from '../../utils/mathExpr';
 import { formatRevisao as formatRevisaoUtil, getRevisao as getRevisaoUtil } from '../../utils/eapCopy';
 
 ChartJS.register(ArcElement, Tooltip, Legend);
@@ -33,7 +34,7 @@ const CORES_PIZZA = [
 ];
 
 const GRID_COLS =
-  'minmax(72px, 88px) minmax(180px, 1.6fr) 44px 78px 92px 92px 100px 100px 100px 52px 70px';
+  'minmax(72px, 88px) minmax(180px, 1.6fr) minmax(72px, 88px) 118px 92px 92px 100px 100px 100px 52px 70px';
 
 function custosAgrupados(cats, quantidade = 1) {
   const totME = (cats?.Material || 0) + (cats?.Equipamento || 0);
@@ -130,8 +131,8 @@ function EapGridHeader() {
           <div>Descrição</div>
           <div className="eap-col-un">Un.</div>
           <div className="eap-col-num">Qtd</div>
-          <div className="eap-col-num" title="Custo unitário Material + Equipamento">CU Mat+Eq</div>
-          <div className="eap-col-num" title="Custo unitário Mão de Obra + Serviço">CU MO+Serv</div>
+          <div className="eap-col-num" title="Unitário Material + Equipamento">UNT MAT+EQ</div>
+          <div className="eap-col-num" title="Unitário Mão de Obra + Serviço">UNT MO+SERV</div>
           <div className="eap-col-num" title="Custo total Material + Equipamento">Tot Mat+Eq</div>
           <div className="eap-col-num" title="Custo total Mão de Obra + Serviço">Tot MO+Serv</div>
           <div className="eap-col-num">Total</div>
@@ -159,7 +160,7 @@ export default function EapWorkspace(props) {
     valorTotal, valorComBDI, totaisPorCategoria, calcularBDI, calcularSubvalores,
     abrirCriarNo, abrirEditarNo, removerPacote, removerGrupo, removerSubgrupo,
     abrirAddComp, abrirEditComp, removerComposicao, atualizarQtdInline,
-    salvarEAP, loading, navigate, sairDaEap, orcamentoId,
+    salvarEAP, atualizarValoresCatalogo, loading, navigate, sairDaEap, orcamentoId,
     exportarEAPPdf, exportarEAPExcel, exportarPlanilhaVenda, setShowBdi, atualizarStatus,
     getStatusColor, formatarDataAmigavel, activeDragId, setActiveDragId,
     somenteLeitura = false,
@@ -172,6 +173,11 @@ export default function EapWorkspace(props) {
 
   const [composicaoVisualizacao, setComposicaoVisualizacao] = useState(null);
   const [showGraficoPacotes, setShowGraficoPacotes] = useState(false);
+  const [graficoModo, setGraficoModo] = useState('pacote');
+  const [calcQtd, setCalcQtd] = useState(null); // { uid, nome, formula }
+  const [calcExpr, setCalcExpr] = useState('');
+  const [calcErro, setCalcErro] = useState('');
+  const [calcResultado, setCalcResultado] = useState(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
@@ -192,13 +198,12 @@ export default function EapWorkspace(props) {
 
   const abrirVisualizacao = (comp) => {
     const catalogo = catalogoComposicoes.find((c) => c.id === comp.composicaoId);
-    const listaInsumos =
-      (comp.insumos && comp.insumos.length > 0)
-        ? comp.insumos
-        : (catalogo?.insumos || []);
+    const listaInsumos = catalogo?.insumos?.length
+      ? catalogo.insumos
+      : (comp.insumos || []);
 
     setComposicaoVisualizacao({
-      codigo: resolverCodigo(comp),
+      codigo: comp.codigo || catalogo?.codigo || '—',
       nome: comp.nome || catalogo?.nome || 'Composição',
       unidade: comp.unidade || catalogo?.unidade || '',
       custoUnitario: comp.custoUnitario ?? catalogo?.valorTotal ?? 0,
@@ -261,16 +266,51 @@ export default function EapWorkspace(props) {
           </div>
           <div className="eap-col-un text-muted">{comp.unidade || '—'}</div>
           <div className="eap-col-num">
-            <Form.Control
-              type="number"
-              min="0"
-              step="0.01"
-              size="sm"
-              className="eap-qtd-input"
-              value={comp.quantidade}
-              disabled={somenteLeitura}
-              onChange={(e) => atualizarQtdInline(comp.uid, e.target.value)}
-            />
+            <div className="eap-qtd-wrap">
+              <Form.Control
+                type="number"
+                min="0"
+                step="0.01"
+                size="sm"
+                className="eap-qtd-input"
+                value={comp.quantidade}
+                disabled={somenteLeitura}
+                title={comp.quantidadeFormula ? `Fórmula: ${comp.quantidadeFormula}` : undefined}
+                onChange={(e) => atualizarQtdInline(comp.uid, e.target.value)}
+              />
+              <button
+                type="button"
+                className={`eap-qtd-calc-btn${comp.quantidadeFormula ? ' has-formula' : ''}`}
+                title={
+                  comp.quantidadeFormula
+                    ? `Ver cálculo: ${comp.quantidadeFormula}`
+                    : 'Calcular quantidade'
+                }
+                disabled={somenteLeitura && !comp.quantidadeFormula}
+                onClick={() => {
+                  setCalcQtd({
+                    uid: comp.uid,
+                    nome: comp.nome || 'Composição',
+                    codigo: resolverCodigo(comp)
+                  });
+                  setCalcExpr(comp.quantidadeFormula || String(comp.quantidade ?? ''));
+                  setCalcErro('');
+                  setCalcResultado(
+                    comp.quantidadeFormula
+                      ? (() => {
+                        try {
+                          return arredondarQuantidade(avaliarExpressaoMatematica(comp.quantidadeFormula));
+                        } catch {
+                          return null;
+                        }
+                      })()
+                      : (Number.isFinite(Number(comp.quantidade)) ? Number(comp.quantidade) : null)
+                  );
+                }}
+              >
+                <FaCalculator />
+              </button>
+            </div>
           </div>
           <div className="eap-col-num"><MoneyCell value={custos.unitME} /></div>
           <div className="eap-col-num"><MoneyCell value={custos.unitMOS} /></div>
@@ -500,15 +540,52 @@ export default function EapWorkspace(props) {
       .filter((p) => p.total > 0);
   }, [orcamento]);
 
+  const dadosGruposPizza = useMemo(() => {
+    const itens = [];
+    let idx = 0;
+    const pacotes = [...(orcamento?.pacotes || [])].sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
+    pacotes.forEach((pacote) => {
+      const nomePacote = pacote.nome || 'Pacote';
+      const grupos = [...(pacote.grupos || [])].sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
+      grupos.forEach((grupo) => {
+        const total = totalDoNo(orcamento?.composicoes, { pacoteId: pacote.id, grupoId: grupo.id });
+        if (total > 0) {
+          itens.push({
+            id: `${pacote.id}_${grupo.id}`,
+            nome: `${nomePacote} › ${grupo.nome || 'Grupo'}`,
+            total,
+            cor: CORES_PIZZA[idx % CORES_PIZZA.length]
+          });
+          idx += 1;
+        }
+      });
+      const totalDireto = (orcamento?.composicoes || [])
+        .filter((c) => c.pacoteId === pacote.id && (c.grupoId ?? null) === null)
+        .reduce((s, c) => s + (c.custoTotal || 0), 0);
+      if (totalDireto > 0) {
+        itens.push({
+          id: `${pacote.id}_direto`,
+          nome: `${nomePacote} › Sem grupo`,
+          total: totalDireto,
+          cor: CORES_PIZZA[idx % CORES_PIZZA.length]
+        });
+        idx += 1;
+      }
+    });
+    return itens;
+  }, [orcamento]);
+
+  const dadosGraficoPizza = graficoModo === 'grupo' ? dadosGruposPizza : dadosPacotesPizza;
+
   const chartPacotesData = useMemo(() => ({
-    labels: dadosPacotesPizza.map((p) => p.nome),
+    labels: dadosGraficoPizza.map((p) => p.nome),
     datasets: [{
-      data: dadosPacotesPizza.map((p) => p.total),
-      backgroundColor: dadosPacotesPizza.map((p) => p.cor),
+      data: dadosGraficoPizza.map((p) => p.total),
+      backgroundColor: dadosGraficoPizza.map((p) => p.cor),
       borderColor: '#ffffff',
       borderWidth: 2
     }]
-  }), [dadosPacotesPizza]);
+  }), [dadosGraficoPizza]);
 
   const chartPacotesOptions = useMemo(() => ({
     responsive: true,
@@ -572,10 +649,38 @@ export default function EapWorkspace(props) {
           z-index:2;
         }
         .eap-header-row{position:sticky;top:0;z-index:3;background:var(--color-primary,#17324D)}
-        .eap-col-un{text-align:center}
+        .eap-col-un{text-align:center;white-space:nowrap;font-size:11px}
         .eap-col-num{text-align:right}
         .eap-num{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-        .eap-qtd-input{max-width:74px;margin-left:auto;font-size:12px;padding:2px 6px;text-align:right}
+        .eap-qtd-wrap{
+          display:inline-flex;align-items:center;gap:2px;max-width:100%;margin-left:auto;
+        }
+        .eap-qtd-input{
+          width:72px;font-size:12px;padding:2px 4px;text-align:right;
+          -moz-appearance:textfield;
+        }
+        .eap-qtd-input::-webkit-outer-spin-button,
+        .eap-qtd-input::-webkit-inner-spin-button{
+          -webkit-appearance:none;margin:0;
+        }
+        .eap-qtd-calc-btn{
+          flex:0 0 auto;width:22px;height:26px;padding:0;
+          display:inline-flex;align-items:center;justify-content:center;
+          border:1px solid var(--color-border,#dde3e8);border-radius:4px;
+          background:#fff;color:var(--color-primary,#17324D);font-size:11px;line-height:1;
+          cursor:pointer;
+        }
+        .eap-qtd-calc-btn:hover:not(:disabled){
+          background:#f0f4f8;border-color:var(--color-primary,#17324D);
+        }
+        .eap-qtd-calc-btn.has-formula{
+          background:#e8eef3;border-color:#2F6B8A;color:#2F6B8A;
+        }
+        .eap-qtd-calc-btn:disabled{opacity:0.55;cursor:default;}
+        .eap-calc-resultado{
+          font-size:1.35rem;font-weight:700;color:var(--color-primary,#17324D);
+          font-variant-numeric:tabular-nums;
+        }
         .eap-actions{display:flex;gap:4px;justify-content:flex-end;flex-wrap:wrap}
         .eap-codigo{font-size:11px;word-break:break-all}
         .eap-codigo-btn{
@@ -742,8 +847,8 @@ export default function EapWorkspace(props) {
             variant="outline-secondary"
             size="sm"
             onClick={() => setShowGraficoPacotes(true)}
-            disabled={!dadosPacotesPizza.length}
-            title="Gráfico de participação dos pacotes"
+            disabled={!dadosPacotesPizza.length && !dadosGruposPizza.length}
+            title="Gráfico de participação por pacote ou grupo"
           >
             <FaChartPie className="me-1" /> Gráfico
           </Button>
@@ -774,9 +879,20 @@ export default function EapWorkspace(props) {
             </Dropdown.Menu>
           </Dropdown>
           {!somenteLeitura && (
-            <Button variant="primary" size="sm" disabled={loading} onClick={salvarEAP}>
-              <FaSave className="me-1" /> {loading ? 'Salvando...' : 'Salvar EAP'}
-            </Button>
+            <>
+              <Button
+                variant="outline-primary"
+                size="sm"
+                disabled={loading}
+                onClick={atualizarValoresCatalogo}
+                title="Atualiza composições e insumos com o catálogo e recalcula os totais"
+              >
+                <FaSync className="me-1" /> Atualizar valores
+              </Button>
+              <Button variant="primary" size="sm" disabled={loading} onClick={salvarEAP}>
+                <FaSave className="me-1" /> {loading ? 'Salvando...' : 'Salvar EAP'}
+              </Button>
+            </>
           )}
         </div>
       </div>
@@ -792,7 +908,7 @@ export default function EapWorkspace(props) {
             </div>
           ) : (
             <div className={`eap-table-scroll ${activeDragId ? 'is-dragging' : ''}`}>
-              <div style={{ minWidth: 1100 }}>
+              <div style={{ minWidth: 1130 }}>
                 <EapGridHeader />
                 <DndContext
                   sensors={sensors}
@@ -876,13 +992,22 @@ export default function EapWorkspace(props) {
         <Modal.Header closeButton>
           <Modal.Title>
             <FaChartPie className="me-2" />
-            Participação por pacote
+            Participação por {graficoModo === 'grupo' ? 'grupo' : 'pacote'}
           </Modal.Title>
         </Modal.Header>
         <Modal.Body>
-          {dadosPacotesPizza.length === 0 ? (
+          <div className="d-flex justify-content-end mb-3">
+            <Form.Check
+              type="switch"
+              id="grafico-modo-switch"
+              label={graficoModo === 'grupo' ? 'Por grupo' : 'Por pacote'}
+              checked={graficoModo === 'grupo'}
+              onChange={(e) => setGraficoModo(e.target.checked ? 'grupo' : 'pacote')}
+            />
+          </div>
+          {dadosGraficoPizza.length === 0 ? (
             <p className="text-muted mb-0 text-center py-4">
-              Nenhum pacote com valor para exibir no gráfico.
+              Nenhum {graficoModo === 'grupo' ? 'grupo' : 'pacote'} com valor para exibir no gráfico.
             </p>
           ) : (
             <>
@@ -892,13 +1017,13 @@ export default function EapWorkspace(props) {
               <Table size="sm" responsive className="mt-4 mb-0">
                 <thead>
                   <tr>
-                    <th>Pacote</th>
+                    <th>{graficoModo === 'grupo' ? 'Grupo' : 'Pacote'}</th>
                     <th className="text-end">Valor</th>
                     <th className="text-end">%</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {dadosPacotesPizza.map((p) => {
+                  {dadosGraficoPizza.map((p) => {
                     const pct = valorTotal > 0
                       ? ((p.total / valorTotal) * 100).toFixed(1).replace('.', ',')
                       : '0,0';
@@ -1018,6 +1143,113 @@ export default function EapWorkspace(props) {
         </Modal.Body>
         <Modal.Footer>
           <Button variant="secondary" onClick={fecharVisualizacao}>Fechar</Button>
+        </Modal.Footer>
+      </Modal>
+
+      <Modal
+        show={Boolean(calcQtd)}
+        onHide={() => setCalcQtd(null)}
+        centered
+      >
+        <Modal.Header closeButton>
+          <Modal.Title>
+            <FaCalculator className="me-2" />
+            Calcular quantidade
+          </Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          {calcQtd && (
+            <>
+              <div className="small text-muted mb-3">
+                {calcQtd.codigo ? `${calcQtd.codigo} — ` : ''}
+                {calcQtd.nome}
+              </div>
+              <Form.Group className="mb-3">
+                <Form.Label>Expressão</Form.Label>
+                <Form.Control
+                  as="textarea"
+                  rows={2}
+                  autoFocus
+                  value={calcExpr}
+                  disabled={somenteLeitura}
+                  placeholder="Ex.: (2+2)*4/2"
+                  className="font-monospace"
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setCalcExpr(v);
+                    setCalcErro('');
+                    try {
+                      if (!String(v).trim()) {
+                        setCalcResultado(null);
+                        return;
+                      }
+                      setCalcResultado(arredondarQuantidade(avaliarExpressaoMatematica(v)));
+                    } catch (err) {
+                      setCalcResultado(null);
+                      setCalcErro(err.message || 'Expressão inválida');
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      if (somenteLeitura || calcResultado == null) return;
+                      atualizarQtdInline(calcQtd.uid, calcResultado, { formula: calcExpr });
+                      setCalcQtd(null);
+                    }
+                  }}
+                />
+                <Form.Text muted>
+                  Use +, −, ×, ÷ e parênteses — como em uma célula do Excel.
+                </Form.Text>
+              </Form.Group>
+
+              <div className="border rounded p-3 bg-light">
+                <div className="small text-muted mb-1">Resultado</div>
+                {calcResultado != null ? (
+                  <div className="eap-calc-resultado">
+                    {calcResultado.toLocaleString('pt-BR', { maximumFractionDigits: 6 })}
+                  </div>
+                ) : (
+                  <div className="text-muted">—</div>
+                )}
+                {calcErro && (
+                  <div className="text-danger small mt-2">{calcErro}</div>
+                )}
+              </div>
+            </>
+          )}
+        </Modal.Body>
+        <Modal.Footer>
+          {!somenteLeitura && Boolean(
+            (orcamento.composicoes || []).find((c) => c.uid === calcQtd?.uid)?.quantidadeFormula
+          ) && (
+            <Button
+              variant="outline-secondary"
+              className="me-auto"
+              onClick={() => {
+                const comp = (orcamento.composicoes || []).find((c) => c.uid === calcQtd.uid);
+                if (comp) atualizarQtdInline(comp.uid, comp.quantidade, { formula: '' });
+                setCalcQtd(null);
+              }}
+            >
+              Limpar fórmula
+            </Button>
+          )}
+          <Button variant="secondary" onClick={() => setCalcQtd(null)}>
+            {somenteLeitura ? 'Fechar' : 'Cancelar'}
+          </Button>
+          {!somenteLeitura && (
+            <Button
+              variant="primary"
+              disabled={calcResultado == null || Boolean(calcErro)}
+              onClick={() => {
+                atualizarQtdInline(calcQtd.uid, calcResultado, { formula: calcExpr });
+                setCalcQtd(null);
+              }}
+            >
+              Usar na quantidade
+            </Button>
+          )}
         </Modal.Footer>
       </Modal>
     </div>
