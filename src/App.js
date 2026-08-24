@@ -20,6 +20,7 @@ import Comparativo from './components/Comparativo';
 import Login from './components/Login';
 import SelecaoEmpresa from './components/SelecaoEmpresa';
 import AdminUsuarios from './components/AdminUsuarios';
+import Tutoriais from './components/Tutoriais';
 import ActivityLogger from './components/ActivityLogger';
 import { AuthProvider } from './contexts/AuthContext';
 import { EmpresaProvider } from './contexts/EmpresaContext';
@@ -58,6 +59,13 @@ function App() {
                 <PrivateRoute adminOnly requireEmpresa={false}>
                   <AppShell>
                     <AdminUsuarios />
+                  </AppShell>
+                </PrivateRoute>
+              } />
+              <Route path="/tutoriais" element={
+                <PrivateRoute requireEmpresa={false}>
+                  <AppShell>
+                    <Tutoriais />
                   </AppShell>
                 </PrivateRoute>
               } />

@@ -5,14 +5,14 @@ import { useAuth } from '../contexts/AuthContext';
 import { useEmpresa } from '../contexts/EmpresaContext';
 import {
   FaHome, FaBoxes, FaLayerGroup, FaFileInvoiceDollar,
-  FaBalanceScale, FaUser, FaSignOutAlt, FaBuilding, FaUsersCog
+  FaBalanceScale, FaUser, FaSignOutAlt, FaBuilding, FaUsersCog, FaBookOpen
 } from 'react-icons/fa';
 import Logo from './Logo';
 import { diasTrialRestantes, isContaTrial, isTrialExpirado } from '../utils/trial';
 
 function NavigationBar() {
   const { currentUser, logout, isAdmin, perfil } = useAuth();
-  const { empresaNome, limparEmpresa } = useEmpresa();
+  const { empresaNome, limparEmpresa, empresaId } = useEmpresa();
   const navigate = useNavigate();
   const location = useLocation();
   const [error, setError] = useState('');
@@ -33,7 +33,7 @@ function NavigationBar() {
     return null;
   }
 
-  const naSelecao = location.pathname === '/empresas';
+  const naSelecao = location.pathname === '/empresas' || !empresaId;
   const diasTrial = diasTrialRestantes(perfil);
   const mostrarTrial = isContaTrial(perfil) && !isTrialExpirado(perfil) && diasTrial != null;
 
@@ -90,6 +90,10 @@ function NavigationBar() {
                 {currentUser.displayName || currentUser.email}
               </Dropdown.Toggle>
               <Dropdown.Menu>
+                <Dropdown.Item as={Link} to="/tutoriais">
+                  <FaBookOpen className="me-2" />
+                  Tutoriais
+                </Dropdown.Item>
                 <Dropdown.Item onClick={() => { limparEmpresa(); navigate('/empresas'); }}>
                   <FaBuilding className="me-2" />
                   Trocar empresa
