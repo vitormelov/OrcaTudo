@@ -37,8 +37,11 @@ function fillStyle(rgb) {
 
 function sanitizeText(value) {
   if (value == null) return '';
-  return String(value)
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '');
+  return Array.from(String(value), (ch) => {
+    const c = ch.charCodeAt(0);
+    if (c <= 8 || c === 11 || c === 12 || (c >= 14 && c <= 31)) return '';
+    return ch;
+  }).join('');
 }
 
 function sanitizeNumber(value) {
@@ -277,7 +280,7 @@ function buildComposicoesSheet({ titulo, composicoes, bdiPercent = 0 }) {
     ], 'metaComp');
     merges.push({ s: { r: metaRow, c: 1 }, e: { r: metaRow, c: 3 } });
 
-    const headRow = push([
+    push([
       'Código',
       'Descrição',
       'Unidade',

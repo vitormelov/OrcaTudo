@@ -19,8 +19,7 @@ import {
   deleteDoc, 
   doc, 
   query, 
-  where,
-  orderBy 
+  where
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useAuth } from '../contexts/AuthContext';
@@ -66,6 +65,8 @@ function Orcamentos() {
     if (currentUser && empresaId) {
       fetchOrcamentos();
     }
+    // Carrega apenas quando o usuário/empresa muda
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser, empresaId]);
 
   const fetchOrcamentos = async () => {

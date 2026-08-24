@@ -20,7 +20,6 @@ import {
   addDoc, 
   getDocs, 
   updateDoc, 
-  deleteDoc, 
   doc, 
   query, 
   where,
@@ -103,6 +102,8 @@ function Composicoes() {
       fetchComposicoes();
       fetchInsumos();
     }
+    // Carrega apenas quando o usuário/empresa muda
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser, empresaId]);
 
   useEffect(() => {

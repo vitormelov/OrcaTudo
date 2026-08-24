@@ -23,8 +23,6 @@ import {
   doc, 
   query, 
   where,
-  orderBy,
-  getDoc,
   writeBatch 
 } from 'firebase/firestore';
 import { Line } from 'react-chartjs-2';
@@ -35,8 +33,7 @@ import {
   PointElement,
   LineElement,
   Tooltip,
-  Legend,
-  TimeScale
+  Legend
 } from 'chart.js';
 
 import { db } from '../firebase/config';
@@ -57,7 +54,6 @@ function Insumos() {
   const [searchTerm, setSearchTerm] = useState('');
   const [showHistorico, setShowHistorico] = useState(false);
   const [historicoData, setHistoricoData] = useState({ insumo: null, precos: [] });
-  const [composicoes, setComposicoes] = useState([]);
   const [activeTab, setActiveTab] = useState('meus');
   const [seinfraCatalog, setSeinfraCatalog] = useState([]);
   const [seinfraLoading, setSeinfraLoading] = useState(false);
@@ -131,8 +127,9 @@ function Insumos() {
   useEffect(() => {
     if (currentUser && empresaId) {
       fetchInsumos();
-      fetchComposicoes();
     }
+    // Carrega apenas quando o usuário/empresa muda
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser, empresaId]);
 
   const fetchInsumos = async () => {
@@ -153,24 +150,6 @@ function Insumos() {
     } catch (error) {
       setError('Erro ao carregar insumos');
       console.error(error);
-    }
-  };
-
-  const fetchComposicoes = async () => {
-    try {
-      if (!currentUser || !empresaId) return;
-      const q = query(
-        collection(db, 'composicoes'), 
-        where('empresaId', '==', empresaId)
-      );
-      const querySnapshot = await getDocs(q);
-      const composicoesData = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      setComposicoes(composicoesData);
-    } catch (error) {
-      console.error('Erro ao carregar composições:', error);
     }
   };
 
