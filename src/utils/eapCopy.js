@@ -85,3 +85,19 @@ export function getObraId(orcamento) {
 export function getRevisao(orcamento) {
   return Number.isFinite(Number(orcamento?.revisao)) ? Number(orcamento.revisao) : 0;
 }
+
+export const MOTIVO_REVISAO_INICIAL = 'Revisão inicial';
+
+/** Texto exibido no histórico (Rev. 00 é sempre "Revisão inicial"). */
+export function getMotivoRevisaoExibicao(orcamento) {
+  if (getRevisao(orcamento) === 0) return MOTIVO_REVISAO_INICIAL;
+  const t = (orcamento?.motivoRevisao || '').trim();
+  return t || '—';
+}
+
+export function listarRevisoesDaObra(orcamentos, orcamentoRef) {
+  const obraId = getObraId(orcamentoRef);
+  return (orcamentos || [])
+    .filter((o) => getObraId(o) === obraId)
+    .sort((a, b) => getRevisao(a) - getRevisao(b));
+}

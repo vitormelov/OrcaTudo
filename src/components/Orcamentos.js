@@ -24,9 +24,9 @@ import {
 import { db } from '../firebase/config';
 import { useAuth } from '../contexts/AuthContext';
 import { useEmpresa } from '../contexts/EmpresaContext';
-import { FaPlus, FaEdit, FaTrash, FaSearch, FaFileInvoiceDollar, FaEye, FaCopy, FaSort, FaSortUp, FaSortDown, FaCodeBranch, FaArchive, FaList } from 'react-icons/fa';
+import { FaPlus, FaEdit, FaTrash, FaSearch, FaFileInvoiceDollar, FaEye, FaCopy, FaSort, FaSortUp, FaSortDown, FaCodeBranch, FaArchive, FaList, FaUndo, FaHistory } from 'react-icons/fa';
 import { useNavigate } from 'react-router-dom';
-import { copiarEAPCompleta, formatRevisao, getObraId, getRevisao } from '../utils/eapCopy';
+import { copiarEAPCompleta, formatRevisao, getObraId, getRevisao, MOTIVO_REVISAO_INICIAL, getMotivoRevisaoExibicao, listarRevisoesDaObra } from '../utils/eapCopy';
 import { formatCurrency } from '../utils/formatters';
 import { calcularValorComBdi } from '../utils/bdi';
 
@@ -44,6 +44,13 @@ function Orcamentos() {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortConfig, setSortConfig] = useState({ key: null, direction: null });
   const [mostrarObsoletos, setMostrarObsoletos] = useState(false);
+  const [showHistoricoModal, setShowHistoricoModal] = useState(false);
+  const [historicoRef, setHistoricoRef] = useState(null);
+  const [historicoEditId, setHistoricoEditId] = useState(null);
+  const [historicoEditTexto, setHistoricoEditTexto] = useState('');
+  const [showNovaRevisaoModal, setShowNovaRevisaoModal] = useState(false);
+  const [orcamentoNovaRevisao, setOrcamentoNovaRevisao] = useState(null);
+  const [motivoNovaRevisao, setMotivoNovaRevisao] = useState('');
   
   const [formData, setFormData] = useState({
     nome: '',
@@ -133,10 +140,11 @@ function Orcamentos() {
           empresaId,
           createdAt: new Date(),
           valorTotal: 0,
-          status: 'Em Análise',
+          status: 'Em Execução',
           obraId,
           revisao: 0,
-          revisaoTravada: false
+          revisaoTravada: false,
+          motivoRevisao: MOTIVO_REVISAO_INICIAL
         };
 
         await addDoc(collection(db, 'orcamentos'), orcamentoData);
@@ -215,18 +223,21 @@ function Orcamentos() {
     setShowCopyModal(true);
   };
 
-  const handleNovaRevisao = async (orcamento) => {
-    if (!podeEditar) return;
-    if (orcamento.revisaoTravada) {
-      setError('Esta revisão já está travada. Abra a revisão mais recente do projeto.');
+  const abrirNovaRevisaoModal = (orcamento) => {
+    if (!podeEditar || orcamento.revisaoTravada) return;
+    setOrcamentoNovaRevisao(orcamento);
+    setMotivoNovaRevisao('');
+    setShowNovaRevisaoModal(true);
+  };
+
+  const confirmarNovaRevisao = async () => {
+    const orcamento = orcamentoNovaRevisao;
+    if (!orcamento || !podeEditar) return;
+    const motivo = motivoNovaRevisao.trim();
+    if (!motivo) {
+      setError('Informe o motivo da nova revisão.');
       return;
     }
-
-    const ok = window.confirm(
-      `Criar nova revisão a partir da Rev. ${formatRevisao(getRevisao(orcamento))}?\n\n` +
-        'A revisão atual será travada (somente leitura) e uma nova revisão editável será criada com a mesma EAP.'
-    );
-    if (!ok) return;
 
     setLoading(true);
     setError('');
@@ -234,18 +245,18 @@ function Orcamentos() {
       const obraId = getObraId(orcamento);
       const revisaoAtual = getRevisao(orcamento);
 
-      // Descobrir próxima revisão na família
       const mesmaObra = orcamentos.filter((o) => getObraId(o) === obraId);
       const maxRev = mesmaObra.reduce((max, o) => Math.max(max, getRevisao(o)), revisaoAtual);
       const novaRevisao = maxRev + 1;
 
       const eapCopiada = copiarEAPCompleta(orcamento.pacotes || [], orcamento.composicoes || []);
 
-      // Travar revisão atual
       await updateDoc(doc(db, 'orcamentos', orcamento.id), {
         revisaoTravada: true,
         obraId,
         revisao: revisaoAtual,
+        status: 'Obsoleto',
+        statusAntesObsoleto: orcamento.status !== 'Obsoleto' ? orcamento.status : (orcamento.statusAntesObsoleto || 'Em Execução'),
         updatedAt: new Date()
       });
 
@@ -260,11 +271,12 @@ function Orcamentos() {
         createdAt: new Date(),
         valorTotal: orcamento.valorTotal || 0,
         totaisPorCategoria: orcamento.totaisPorCategoria || null,
-        status: 'Em Análise',
+        status: 'Em Execução',
         obraId,
         revisao: novaRevisao,
         revisaoTravada: false,
         revisaoOrigemId: orcamento.id,
+        motivoRevisao: motivo,
         pacotes: eapCopiada.pacotes,
         composicoes: eapCopiada.composicoes,
         bdiConfig: orcamento.bdiConfig ? { ...orcamento.bdiConfig } : null,
@@ -272,6 +284,9 @@ function Orcamentos() {
       };
 
       const docRef = await addDoc(collection(db, 'orcamentos'), novoOrcamento);
+      setShowNovaRevisaoModal(false);
+      setOrcamentoNovaRevisao(null);
+      setMotivoNovaRevisao('');
       await fetchOrcamentos();
       navigate(`/orcamentos/${docRef.id}/eap`);
     } catch (error) {
@@ -280,6 +295,48 @@ function Orcamentos() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const abrirHistoricoRevisoes = (orcamento) => {
+    setHistoricoRef(orcamento);
+    setHistoricoEditId(null);
+    setHistoricoEditTexto('');
+    setShowHistoricoModal(true);
+  };
+
+  const iniciarEdicaoMotivo = (rev) => {
+    if (getRevisao(rev) === 0) return;
+    setHistoricoEditId(rev.id);
+    setHistoricoEditTexto((rev.motivoRevisao || '').trim());
+  };
+
+  const salvarMotivoRevisao = async () => {
+    if (!historicoEditId || !podeEditar) return;
+    const texto = historicoEditTexto.trim();
+    if (!texto) {
+      setError('O motivo da revisão não pode ficar vazio.');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    try {
+      await updateDoc(doc(db, 'orcamentos', historicoEditId), {
+        motivoRevisao: texto,
+        updatedAt: new Date()
+      });
+      await fetchOrcamentos();
+      setHistoricoEditId(null);
+      setHistoricoEditTexto('');
+    } catch (err) {
+      setError('Erro ao salvar motivo da revisão');
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleNovaRevisao = (orcamento) => {
+    abrirNovaRevisaoModal(orcamento);
   };
 
   const handleSubmitCopy = async (e) => {
@@ -305,10 +362,11 @@ function Orcamentos() {
         createdAt: new Date(),
         valorTotal: orcamentoOriginal.valorTotal || 0,
         totaisPorCategoria: orcamentoOriginal.totaisPorCategoria || null,
-        status: 'Em Análise',
+        status: 'Em Execução',
         obraId,
         revisao: 0,
         revisaoTravada: false,
+        motivoRevisao: MOTIVO_REVISAO_INICIAL,
         pacotes: eapCopiada.pacotes,
         composicoes: eapCopiada.composicoes,
         bdiConfig: orcamentoOriginal.bdiConfig ? { ...orcamentoOriginal.bdiConfig } : null
@@ -336,6 +394,58 @@ function Orcamentos() {
     }
   };
 
+  const handleArquivarObsoleto = async (orcamento) => {
+    if (!podeEditar || orcamento.revisaoTravada) return;
+    const ok = window.confirm(
+      `Arquivar Rev. ${formatRevisao(getRevisao(orcamento))} de "${orcamento.nome}"?\n\n` +
+        'O orçamento irá para obsoletos (somente leitura) com status Obsoleto.'
+    );
+    if (!ok) return;
+    setLoading(true);
+    setError('');
+    try {
+      await updateDoc(doc(db, 'orcamentos', orcamento.id), {
+        revisaoTravada: true,
+        status: 'Obsoleto',
+        statusAntesObsoleto: orcamento.status !== 'Obsoleto' ? orcamento.status : (orcamento.statusAntesObsoleto || 'Em Execução'),
+        updatedAt: new Date()
+      });
+      await fetchOrcamentos();
+    } catch (err) {
+      setError('Erro ao arquivar orçamento');
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRestaurarObsoleto = async (orcamento) => {
+    if (!podeEditar || !orcamento.revisaoTravada) return;
+    const ok = window.confirm(
+      `Restaurar Rev. ${formatRevisao(getRevisao(orcamento))} de "${orcamento.nome}"?\n\n` +
+        'Ela voltará para a lista de orçamentos atuais e poderá ser editada novamente.'
+    );
+    if (!ok) return;
+    setLoading(true);
+    setError('');
+    try {
+      const statusRestaurado = orcamento.statusAntesObsoleto || 'Em Execução';
+      await updateDoc(doc(db, 'orcamentos', orcamento.id), {
+        revisaoTravada: false,
+        status: statusRestaurado,
+        statusAntesObsoleto: null,
+        updatedAt: new Date()
+      });
+      await fetchOrcamentos();
+      setMostrarObsoletos(false);
+    } catch (err) {
+      setError('Erro ao restaurar orçamento');
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const orcamentosAtuais = orcamentos.filter((o) => !o.revisaoTravada);
   const orcamentosObsoletos = orcamentos.filter((o) => !!o.revisaoTravada);
   const listaBase = mostrarObsoletos ? orcamentosObsoletos : orcamentosAtuais;
@@ -352,7 +462,8 @@ function Orcamentos() {
       'Aprovado': 'success',
       'Rejeitado': 'danger',
       'Em Execução': 'info',
-      'Concluído': 'primary'
+      'Concluído': 'primary',
+      'Obsoleto': 'secondary'
     };
     return colors[status] || 'secondary';
   };
@@ -543,7 +654,8 @@ function Orcamentos() {
                   <FaArchive size={48} className="text-muted mb-3" />
                   <p className="text-muted mb-0">Nenhuma revisão obsoleta encontrada</p>
                   <p className="text-muted small">
-                    Ao criar uma nova revisão, a anterior fica travada e aparece aqui.
+                    Ao criar uma nova revisão ou arquivar manualmente, a revisão anterior aparece aqui.
+                    Use o botão de restaurar para editá-la novamente.
                   </p>
                 </>
               ) : (
@@ -577,7 +689,7 @@ function Orcamentos() {
                     <td>
                       <strong>{orcamento.nome}</strong>
                       {orcamento.revisaoTravada && (
-                        <div><small className="text-muted">Revisão travada (somente leitura)</small></div>
+                        <div><small className="text-muted">Obsoleto (somente leitura)</small></div>
                       )}
                     </td>
                     <td>
@@ -609,6 +721,39 @@ function Orcamentos() {
                       >
                         <FaEye />
                       </Button>
+                      <Button
+                        size="sm"
+                        variant="outline-dark"
+                        className="me-2"
+                        onClick={() => abrirHistoricoRevisoes(orcamento)}
+                        title="Histórico de revisões"
+                      >
+                        <FaHistory />
+                      </Button>
+                      {podeEditar && orcamento.revisaoTravada && (
+                        <Button
+                          size="sm"
+                          variant="outline-success"
+                          className="me-2"
+                          onClick={() => handleRestaurarObsoleto(orcamento)}
+                          disabled={loading}
+                          title="Restaurar para orçamentos atuais"
+                        >
+                          <FaUndo />
+                        </Button>
+                      )}
+                      {podeEditar && !orcamento.revisaoTravada && (
+                        <Button
+                          size="sm"
+                          variant="outline-secondary"
+                          className="me-2"
+                          onClick={() => handleArquivarObsoleto(orcamento)}
+                          disabled={loading}
+                          title="Arquivar (mover para obsoletos)"
+                        >
+                          <FaArchive />
+                        </Button>
+                      )}
                       {podeEditar && !orcamento.revisaoTravada && (
                         <Button
                           size="sm"
@@ -852,6 +997,197 @@ function Orcamentos() {
             </Button>
           </Modal.Footer>
         </Form>
+      </Modal>
+
+      <Modal
+        show={showNovaRevisaoModal}
+        onHide={() => {
+          if (loading) return;
+          setShowNovaRevisaoModal(false);
+          setOrcamentoNovaRevisao(null);
+          setMotivoNovaRevisao('');
+        }}
+        centered
+      >
+        <Modal.Header closeButton>
+          <Modal.Title>Nova revisão</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          {orcamentoNovaRevisao && (
+            <>
+              <p className="text-muted small mb-3">
+                A revisão atual (Rev. {formatRevisao(getRevisao(orcamentoNovaRevisao))}) será arquivada
+                como obsoleta e uma nova revisão editável será criada com a mesma EAP.
+              </p>
+              <Form.Group>
+                <Form.Label>Motivo da nova revisão *</Form.Label>
+                <Form.Control
+                  as="textarea"
+                  rows={3}
+                  autoFocus
+                  value={motivoNovaRevisao}
+                  onChange={(e) => setMotivoNovaRevisao(e.target.value)}
+                  placeholder="Ex.: Ajuste de quantitativos após visita técnica"
+                />
+              </Form.Group>
+            </>
+          )}
+        </Modal.Body>
+        <Modal.Footer>
+          <Button
+            variant="secondary"
+            disabled={loading}
+            onClick={() => {
+              setShowNovaRevisaoModal(false);
+              setOrcamentoNovaRevisao(null);
+              setMotivoNovaRevisao('');
+            }}
+          >
+            Cancelar
+          </Button>
+          <Button
+            variant="primary"
+            disabled={loading || !motivoNovaRevisao.trim()}
+            onClick={confirmarNovaRevisao}
+          >
+            {loading ? 'Criando...' : 'Criar revisão'}
+          </Button>
+        </Modal.Footer>
+      </Modal>
+
+      <Modal
+        show={showHistoricoModal}
+        onHide={() => {
+          setShowHistoricoModal(false);
+          setHistoricoRef(null);
+          setHistoricoEditId(null);
+          setHistoricoEditTexto('');
+        }}
+        size="lg"
+        centered
+      >
+        <Modal.Header closeButton>
+          <Modal.Title>
+            <FaHistory className="me-2" />
+            Histórico de revisões
+          </Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          {historicoRef && (
+            <>
+              <p className="mb-3">
+                <strong>{historicoRef.nome}</strong>
+                <span className="text-muted small ms-2">{historicoRef.cliente}</span>
+              </p>
+              <Table responsive hover size="sm" className="mb-0">
+                <thead>
+                  <tr>
+                    <th>Rev.</th>
+                    <th>Motivo</th>
+                    <th>Situação</th>
+                    <th>Data</th>
+                    <th>Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {listarRevisoesDaObra(orcamentos, historicoRef).map((rev) => {
+                    const isInicial = getRevisao(rev) === 0;
+                    const editando = historicoEditId === rev.id;
+                    return (
+                      <tr key={rev.id}>
+                        <td>
+                          <Badge bg={rev.revisaoTravada ? 'secondary' : 'primary'}>
+                            {formatRevisao(getRevisao(rev))}
+                          </Badge>
+                        </td>
+                        <td style={{ minWidth: 220 }}>
+                          {editando ? (
+                            <Form.Control
+                              as="textarea"
+                              rows={2}
+                              size="sm"
+                              value={historicoEditTexto}
+                              onChange={(e) => setHistoricoEditTexto(e.target.value)}
+                            />
+                          ) : (
+                            getMotivoRevisaoExibicao(rev)
+                          )}
+                        </td>
+                        <td>
+                          <Badge bg={rev.revisaoTravada ? 'secondary' : 'success'}>
+                            {rev.revisaoTravada ? 'Obsoleto' : 'Atual'}
+                          </Badge>
+                        </td>
+                        <td className="text-nowrap">{formatarData(rev.data)}</td>
+                        <td className="text-nowrap">
+                          <Button
+                            size="sm"
+                            variant="outline-info"
+                            className="me-1"
+                            onClick={() => {
+                              setShowHistoricoModal(false);
+                              handleViewEAP(rev);
+                            }}
+                            title="Abrir EAP"
+                          >
+                            <FaEye />
+                          </Button>
+                          {podeEditar && !isInicial && !editando && (
+                            <Button
+                              size="sm"
+                              variant="outline-primary"
+                              onClick={() => iniciarEdicaoMotivo(rev)}
+                              title="Editar motivo"
+                            >
+                              <FaEdit />
+                            </Button>
+                          )}
+                          {podeEditar && editando && (
+                            <>
+                              <Button
+                                size="sm"
+                                variant="primary"
+                                className="me-1"
+                                disabled={loading || !historicoEditTexto.trim()}
+                                onClick={salvarMotivoRevisao}
+                              >
+                                Salvar
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline-secondary"
+                                disabled={loading}
+                                onClick={() => {
+                                  setHistoricoEditId(null);
+                                  setHistoricoEditTexto('');
+                                }}
+                              >
+                                Cancelar
+                              </Button>
+                            </>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </Table>
+            </>
+          )}
+        </Modal.Body>
+        <Modal.Footer>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setShowHistoricoModal(false);
+              setHistoricoRef(null);
+              setHistoricoEditId(null);
+              setHistoricoEditTexto('');
+            }}
+          >
+            Fechar
+          </Button>
+        </Modal.Footer>
       </Modal>
     </div>
   );

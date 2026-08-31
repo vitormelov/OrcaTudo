@@ -41,7 +41,7 @@ const formatarDataAmigavel = (dataISO) => {
 
 const getStatusColor = (status) => ({
   'Em Análise': 'warning', Aprovado: 'success', Rejeitado: 'danger',
-  'Em Execução': 'info', Concluído: 'primary'
+  'Em Execução': 'info', Concluído: 'primary', Obsoleto: 'secondary'
 }[status] || 'secondary');
 
 const MENSAGEM_SAIR_SEM_SALVAR =
@@ -90,6 +90,8 @@ function OrcamentoEAP() {
   const [showExportPdf, setShowExportPdf] = useState(false);
   const [exportPdfModoVenda, setExportPdfModoVenda] = useState(false);
   const [exportPdfSecoes, setExportPdfSecoes] = useState({ ...SECOES_PDF_PADRAO });
+  const [showNovaRevisaoModal, setShowNovaRevisaoModal] = useState(false);
+  const [motivoNovaRevisao, setMotivoNovaRevisao] = useState('');
 
   useEffect(() => {
     if (currentUser && orcamentoId && empresaId) carregar();
@@ -537,16 +539,21 @@ function OrcamentoEAP() {
       );
       if (!seguir) return;
     }
-    const ok = window.confirm(
-      `Criar nova revisão a partir da Rev. ${formatRevisao(getRevisao(orcamento))}?\n\n` +
-        'A revisão atual será travada e uma nova revisão editável será criada.'
-    );
-    if (!ok) return;
+    setMotivoNovaRevisao('');
+    setShowNovaRevisaoModal(true);
+  };
+
+  const confirmarNovaRevisao = async () => {
+    if (!orcamento || !podeEditar || orcamento.revisaoTravada) return;
+    const motivo = motivoNovaRevisao.trim();
+    if (!motivo) {
+      setError('Informe o motivo da nova revisão.');
+      return;
+    }
 
     setLoading(true);
     setError('');
     try {
-      // Salva estado atual antes de travar
       const { pacotes, composicoes } = stripUidsForSave(orcamento);
       const obraId = getObraId(orcamento);
       const revisaoAtual = getRevisao(orcamento);
@@ -561,6 +568,8 @@ function OrcamentoEAP() {
         obraId,
         revisao: revisaoAtual,
         revisaoTravada: true,
+        status: 'Obsoleto',
+        statusAntesObsoleto: orcamento.status !== 'Obsoleto' ? orcamento.status : (orcamento.statusAntesObsoleto || 'Em Execução'),
         updatedAt: new Date()
       });
 
@@ -587,17 +596,20 @@ function OrcamentoEAP() {
         createdAt: new Date(),
         valorTotal: calcularValorTotal(composicoes),
         totaisPorCategoria,
-        status: 'Em Análise',
+        status: 'Em Execução',
         obraId,
         revisao: maxRev + 1,
         revisaoTravada: false,
         revisaoOrigemId: orcamentoId,
+        motivoRevisao: motivo,
         pacotes: eapCopiada.pacotes,
         composicoes: eapCopiada.composicoes,
         bdiConfig: orcamento.bdiConfig ? { ...bdiConfig } : null,
         ultimaAtualizacaoEAP: new Date().toISOString()
       });
 
+      setShowNovaRevisaoModal(false);
+      setMotivoNovaRevisao('');
       navigate(`/orcamentos/${docRef.id}/eap`);
     } catch (e) {
       console.error(e);
@@ -988,6 +1000,60 @@ function OrcamentoEAP() {
             disabled={!Object.values(exportPdfSecoes).some(Boolean)}
           >
             Gerar PDF
+          </Button>
+        </Modal.Footer>
+      </Modal>
+
+      <Modal
+        show={showNovaRevisaoModal}
+        onHide={() => {
+          if (loading) return;
+          setShowNovaRevisaoModal(false);
+          setMotivoNovaRevisao('');
+        }}
+        centered
+      >
+        <Modal.Header closeButton>
+          <Modal.Title>Nova revisão</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          {orcamento && (
+            <>
+              <p className="text-muted small mb-3">
+                A revisão atual (Rev. {formatRevisao(getRevisao(orcamento))}) será arquivada
+                como obsoleta e uma nova revisão editável será criada com a mesma EAP.
+              </p>
+              <Form.Group>
+                <Form.Label>Motivo da nova revisão *</Form.Label>
+                <Form.Control
+                  as="textarea"
+                  rows={3}
+                  autoFocus
+                  value={motivoNovaRevisao}
+                  onChange={(e) => setMotivoNovaRevisao(e.target.value)}
+                  placeholder="Ex.: Ajuste de quantitativos após visita técnica"
+                />
+              </Form.Group>
+            </>
+          )}
+        </Modal.Body>
+        <Modal.Footer>
+          <Button
+            variant="secondary"
+            disabled={loading}
+            onClick={() => {
+              setShowNovaRevisaoModal(false);
+              setMotivoNovaRevisao('');
+            }}
+          >
+            Cancelar
+          </Button>
+          <Button
+            variant="primary"
+            disabled={loading || !motivoNovaRevisao.trim()}
+            onClick={confirmarNovaRevisao}
+          >
+            {loading ? 'Criando...' : 'Criar revisão'}
           </Button>
         </Modal.Footer>
       </Modal>

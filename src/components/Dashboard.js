@@ -31,7 +31,8 @@ function getStatusColor(status) {
     Aprovado: 'success',
     Rejeitado: 'danger',
     'Em Execução': 'info',
-    Concluído: 'primary'
+    Concluído: 'primary',
+    Obsoleto: 'secondary'
   }[status] || 'secondary');
 }
 
