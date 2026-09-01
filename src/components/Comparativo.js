@@ -33,7 +33,7 @@ import {
   diffComposicoes,
   diffInsumos,
   getRevisao,
-  caminhoComp
+  organizarLinhasCompPorEap
 } from '../utils/revisaoDiff';
 
 function Comparativo() {
@@ -156,11 +156,15 @@ function Comparativo() {
         tipo: 'igual',
         a: x.a,
         b: x.b,
-        caminho: caminhoFromPair(revA, revB, x.a, x.b),
         nome: x.b?.nome || x.a?.nome
       }))
     ];
-  }, [diffComp, filtroComp, revA, revB]);
+  }, [diffComp, filtroComp]);
+
+  const linhasCompOrganizadas = useMemo(() => {
+    if (!revA || !revB || !linhasComp.length) return [];
+    return organizarLinhasCompPorEap(revA, revB, linhasComp);
+  }, [revA, revB, linhasComp]);
 
   const linhasInsumo = useMemo(() => {
     if (!diffIns) return [];
@@ -327,7 +331,6 @@ function Comparativo() {
                 <thead>
                   <tr>
                     <th>Status</th>
-                    <th>Caminho</th>
                     <th>Composição</th>
                     <th>Qtd {labelRevisao(revA)}</th>
                     <th>Qtd {labelRevisao(revB)}</th>
@@ -339,17 +342,39 @@ function Comparativo() {
                   </tr>
                 </thead>
                 <tbody>
-                  {linhasComp.length === 0 ? (
+                  {linhasCompOrganizadas.length === 0 ? (
                     <tr>
-                      <td colSpan={10} className="text-center text-muted py-4">
+                      <td colSpan={9} className="text-center text-muted py-4">
                         Nenhuma alteração em composições entre essas revisões.
                       </td>
                     </tr>
                   ) : (
-                    linhasComp.map((row, idx) => {
+                    linhasCompOrganizadas.map((item, idx) => {
+                      if (item.tipo === 'header') {
+                        const bg =
+                          item.headerTipo === 'pacote' ? 'table-primary' :
+                          item.headerTipo === 'grupo' ? 'table-light' :
+                          item.headerTipo === 'secao' ? 'table-warning' : '';
+                        return (
+                          <tr key={`hdr-${idx}`} className={bg}>
+                            <td colSpan={9}>
+                              <span
+                                style={{
+                                  paddingLeft: `${item.nivel * 20}px`,
+                                  fontWeight: item.headerTipo === 'pacote' || item.headerTipo === 'secao' ? 700 : 600,
+                                  display: 'block'
+                                }}
+                              >
+                                {item.nome}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      }
+
+                      const row = item.row;
                       const a = row.a;
                       const b = row.b;
-                      const caminho = row.caminho || '—';
                       const nome = row.nome || b?.nome || a?.nome || '—';
                       let badge = <Badge bg="secondary">Igual</Badge>;
                       if (row.tipo === 'adicionada') badge = <Badge bg="success">Adicionada</Badge>;
@@ -359,7 +384,6 @@ function Comparativo() {
                       return (
                         <tr key={`${row.tipo}-${row.key || idx}`}>
                           <td>{badge}</td>
-                          <td><small>{caminho}</small></td>
                           <td>
                             <strong>{nome}</strong>
                             {row.tipo === 'modificada' && row.mudancas && (
@@ -479,12 +503,6 @@ function Comparativo() {
       )}
     </div>
   );
-}
-
-function caminhoFromPair(revA, revB, a, b) {
-  if (b) return caminhoComp(revB, b);
-  if (a) return caminhoComp(revA, a);
-  return '—';
 }
 
 export default Comparativo;

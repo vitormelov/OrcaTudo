@@ -28,7 +28,7 @@ import {
 import { db } from '../firebase/config';
 import { useAuth } from '../contexts/AuthContext';
 import { useEmpresa } from '../contexts/EmpresaContext';
-import { FaPlus, FaEdit, FaTrash, FaSearch, FaLayerGroup, FaBoxes, FaDatabase, FaTimes, FaCheck, FaCopy } from 'react-icons/fa';
+import { FaPlus, FaEdit, FaTrash, FaSearch, FaLayerGroup, FaBoxes, FaDatabase, FaTimes, FaCheck, FaCopy, FaSort, FaSortUp, FaSortDown } from 'react-icons/fa';
 
 function Composicoes() {
   const { currentUser } = useAuth();
@@ -52,6 +52,7 @@ function Composicoes() {
   const [deleteMode, setDeleteMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState([]);
   const [isCopying, setIsCopying] = useState(false);
+  const [sortConfig, setSortConfig] = useState({ key: null, direction: null });
   
   const [formData, setFormData] = useState({
     codigo: '',
@@ -702,6 +703,65 @@ function Composicoes() {
     );
   });
 
+  const toggleSort = (key) => {
+    setSortConfig((prev) => {
+      if (prev.key !== key) return { key, direction: 'asc' };
+      if (prev.direction === 'asc') return { key, direction: 'desc' };
+      return { key: null, direction: null };
+    });
+  };
+
+  const getSortValue = (composicao, key) => {
+    switch (key) {
+      case 'codigo':
+        return (composicao.codigo || '').toString().toLowerCase();
+      case 'nome':
+        return (composicao.nome || '').toLowerCase();
+      case 'unidade':
+        return (composicao.unidade || '').toLowerCase();
+      case 'insumos':
+        return composicao.insumos?.length || 0;
+      case 'valorTotal':
+        return Number(composicao.valorTotal) || 0;
+      default:
+        return '';
+    }
+  };
+
+  const sortedComposicoes = (() => {
+    if (!sortConfig.key || !sortConfig.direction) return filteredComposicoes;
+    const list = [...filteredComposicoes];
+    list.sort((a, b) => {
+      const va = getSortValue(a, sortConfig.key);
+      const vb = getSortValue(b, sortConfig.key);
+      let cmp = 0;
+      if (typeof va === 'number' && typeof vb === 'number') {
+        cmp = va - vb;
+      } else {
+        cmp = String(va).localeCompare(String(vb), 'pt-BR', { numeric: true, sensitivity: 'base' });
+      }
+      return sortConfig.direction === 'asc' ? cmp : -cmp;
+    });
+    return list;
+  })();
+
+  const renderSortIcon = (key) => {
+    if (sortConfig.key !== key) return <FaSort className="ms-1 text-muted" size={12} />;
+    if (sortConfig.direction === 'asc') return <FaSortUp className="ms-1" size={12} />;
+    return <FaSortDown className="ms-1" size={12} />;
+  };
+
+  const SortableTh = ({ columnKey, children, style }) => (
+    <th
+      onClick={() => toggleSort(columnKey)}
+      style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap', ...style }}
+      title="Clique para ordenar"
+    >
+      {children}
+      {renderSortIcon(columnKey)}
+    </th>
+  );
+
   const insumosFiltrados = insumos.filter(insumo => {
     const termo = insumoSearchTerm.toLowerCase();
     return (
@@ -821,16 +881,16 @@ function Composicoes() {
                           />
                         </th>
                       )}
-                      <th style={{width: '10%'}}>Código</th>
-                      <th style={{width: '35%'}}>Nome</th>
-                      <th style={{width: '15%'}}>Unidade</th>
-                      <th style={{width: '15%'}}>Insumos</th>
-                      <th style={{width: '15%'}}>Valor Total</th>
+                      <SortableTh columnKey="codigo" style={{ width: '10%' }}>Código</SortableTh>
+                      <SortableTh columnKey="nome" style={{ width: '35%' }}>Nome</SortableTh>
+                      <SortableTh columnKey="unidade" style={{ width: '15%' }}>Unidade</SortableTh>
+                      <SortableTh columnKey="insumos" style={{ width: '15%' }}>Insumos</SortableTh>
+                      <SortableTh columnKey="valorTotal" style={{ width: '15%' }}>Valor Total</SortableTh>
                       {podeEditar && !deleteMode && <th style={{width: '12%'}}>Ações</th>}
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredComposicoes.map((composicao) => (
+                    {sortedComposicoes.map((composicao) => (
                       <tr
                         key={composicao.id}
                         onClick={() => {

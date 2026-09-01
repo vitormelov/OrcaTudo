@@ -1,4 +1,6 @@
 import { formatRevisao, getObraId, getRevisao } from './eapCopy';
+import { migrarEapAntigo, getCompsDoNo, pacoteContainer, grupoContainer } from './eapTree';
+import { getContainerItems } from './eapDnD';
 
 export function caminhoComp(orcamento, comp) {
   const pacotes = orcamento?.pacotes || [];
@@ -117,6 +119,256 @@ export function diffComposicoes(revA, revB) {
   });
 
   return { adicionadas, removidas, modificadas, iguais };
+}
+
+/**
+ * Organiza linhas do comparativo na hierarquia EAP do orçamento base (rev. anterior),
+ * com pacotes, grupos e subgrupos na mesma ordem do orçamento.
+ */
+export function organizarLinhasCompPorEap(revBase, revComparada, linhasComp) {
+  if (!revBase || !linhasComp?.length) return [];
+
+  const base = migrarEapAntigo(revBase);
+  const comparada = revComparada ? migrarEapAntigo(revComparada) : null;
+  const linhasMap = new Map();
+  linhasComp.forEach((row, idx) => {
+    linhasMap.set(row.key || `__idx_${idx}`, row);
+  });
+  const usedKeys = new Set();
+  const resultado = [];
+
+  const emitComp = (orcamento, comp) => {
+    const key = chaveComposicao(orcamento, comp);
+    const row = linhasMap.get(key);
+    if (!row || usedKeys.has(key)) return false;
+    usedKeys.add(key);
+    resultado.push({ tipo: 'comp', row });
+    return true;
+  };
+
+  const emitHeader = (headerTipo, nome, nivel) => {
+    resultado.push({ tipo: 'header', headerTipo, nome, nivel });
+  };
+
+  const compVisivelNoEscopo = (orcamento, escopo) =>
+    getCompsDoNo(orcamento.composicoes, escopo).some((c) =>
+      linhasMap.has(chaveComposicao(orcamento, c))
+    );
+
+  const walkGrupo = (pacote, grupo, nivel) => {
+    const gEscopo = { pacoteId: pacote.id, grupoId: grupo.id };
+    const gItems = getContainerItems(base, grupoContainer(grupo.id));
+    const temFilho =
+      compVisivelNoEscopo(base, gEscopo) ||
+      gItems.some((gItemId) => {
+        if (!gItemId.startsWith('subgrupo:')) {
+          if (!gItemId.startsWith('comp:')) return false;
+          const cUid = gItemId.slice(5);
+          const c = (base.composicoes || []).find((x) => x.uid === cUid);
+          return c && linhasMap.has(chaveComposicao(base, c));
+        }
+        const sUid = gItemId.slice(9);
+        const subgrupo = (grupo.subgrupos || []).find((x) => x.uid === sUid || x.id === sUid);
+        if (!subgrupo) return false;
+        return compVisivelNoEscopo(base, {
+          pacoteId: pacote.id,
+          grupoId: grupo.id,
+          subgrupoId: subgrupo.id
+        });
+      });
+    if (!temFilho) return;
+
+    emitHeader('grupo', grupo.nome || 'Grupo', nivel);
+
+    gItems.forEach((gItemId) => {
+      if (gItemId.startsWith('subgrupo:')) {
+        const sUid = gItemId.slice(9);
+        const subgrupo = (grupo.subgrupos || []).find((x) => x.uid === sUid || x.id === sUid);
+        if (!subgrupo) return;
+        const sEscopo = {
+          pacoteId: pacote.id,
+          grupoId: grupo.id,
+          subgrupoId: subgrupo.id
+        };
+        if (!compVisivelNoEscopo(base, sEscopo)) return;
+        emitHeader('subgrupo', subgrupo.nome || 'Subgrupo', nivel + 1);
+        getCompsDoNo(base.composicoes, sEscopo).forEach((c) => emitComp(base, c));
+        return;
+      }
+      if (gItemId.startsWith('comp:')) {
+        const cUid = gItemId.slice(5);
+        const c = (base.composicoes || []).find((x) => x.uid === cUid);
+        if (c) emitComp(base, c);
+      }
+    });
+  };
+
+  const walkPacote = (pacote, nivel) => {
+    const pItems = getContainerItems(base, pacoteContainer(pacote.id));
+    const temFilho =
+      compVisivelNoEscopo(base, { pacoteId: pacote.id }) ||
+      pItems.some((itemId) => {
+        if (itemId.startsWith('grupo:')) {
+          const uid = itemId.slice(6);
+          const grupo = (pacote.grupos || []).find((x) => x.uid === uid || x.id === uid);
+          if (!grupo) return false;
+          const gItems = getContainerItems(base, grupoContainer(grupo.id));
+          return (
+            compVisivelNoEscopo(base, { pacoteId: pacote.id, grupoId: grupo.id }) ||
+            gItems.some((gItemId) => {
+              if (gItemId.startsWith('subgrupo:')) {
+                const sUid = gItemId.slice(9);
+                const subgrupo = (grupo.subgrupos || []).find((x) => x.uid === sUid || x.id === sUid);
+                return (
+                  subgrupo &&
+                  compVisivelNoEscopo(base, {
+                    pacoteId: pacote.id,
+                    grupoId: grupo.id,
+                    subgrupoId: subgrupo.id
+                  })
+                );
+              }
+              if (gItemId.startsWith('comp:')) {
+                const cUid = gItemId.slice(5);
+                const c = (base.composicoes || []).find((x) => x.uid === cUid);
+                return c && linhasMap.has(chaveComposicao(base, c));
+              }
+              return false;
+            })
+          );
+        }
+        if (itemId.startsWith('comp:')) {
+          const cUid = itemId.slice(5);
+          const c = (base.composicoes || []).find((x) => x.uid === cUid);
+          return c && linhasMap.has(chaveComposicao(base, c));
+        }
+        return false;
+      });
+    if (!temFilho) return;
+
+    emitHeader('pacote', pacote.nome || 'Pacote', nivel);
+
+    pItems.forEach((itemId) => {
+      if (itemId.startsWith('grupo:')) {
+        const uid = itemId.slice(6);
+        const grupo = (pacote.grupos || []).find((x) => x.uid === uid || x.id === uid);
+        if (grupo) walkGrupo(pacote, grupo, nivel + 1);
+        return;
+      }
+      if (itemId.startsWith('comp:')) {
+        const cUid = itemId.slice(5);
+        const c = (base.composicoes || []).find((x) => x.uid === cUid);
+        if (c) emitComp(base, c);
+      }
+    });
+  };
+
+  const pacotes = [...(base.pacotes || [])].sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
+  pacotes.forEach((pacote) => walkPacote(pacote, 0));
+
+  // Composições novas na revisão comparada (não existiam na base)
+  const restantes = linhasComp.filter((r) => r.key && !usedKeys.has(r.key));
+  if (restantes.length && comparada) {
+    const keysRestantes = new Set(restantes.map((r) => r.key));
+    emitHeader('secao', 'Composições adicionadas na revisão comparada', 0);
+
+    const walkGrupoB = (pacote, grupo, nivel) => {
+      const gEscopo = { pacoteId: pacote.id, grupoId: grupo.id };
+      const gItems = getContainerItems(comparada, grupoContainer(grupo.id));
+      const temFilho =
+        getCompsDoNo(comparada.composicoes, gEscopo).some((c) =>
+          keysRestantes.has(chaveComposicao(comparada, c))
+        ) ||
+        gItems.some((gItemId) => {
+          if (!gItemId.startsWith('subgrupo:')) return false;
+          const sUid = gItemId.slice(9);
+          const subgrupo = (grupo.subgrupos || []).find((x) => x.uid === sUid || x.id === sUid);
+          if (!subgrupo) return false;
+          return getCompsDoNo(comparada.composicoes, {
+            pacoteId: pacote.id,
+            grupoId: grupo.id,
+            subgrupoId: subgrupo.id
+          }).some((c) => keysRestantes.has(chaveComposicao(comparada, c)));
+        });
+      if (!temFilho) return;
+
+      emitHeader('grupo', grupo.nome || 'Grupo', nivel);
+      gItems.forEach((gItemId) => {
+        if (gItemId.startsWith('subgrupo:')) {
+          const sUid = gItemId.slice(9);
+          const subgrupo = (grupo.subgrupos || []).find((x) => x.uid === sUid || x.id === sUid);
+          if (!subgrupo) return;
+          const sEscopo = {
+            pacoteId: pacote.id,
+            grupoId: grupo.id,
+            subgrupoId: subgrupo.id
+          };
+          const comps = getCompsDoNo(comparada.composicoes, sEscopo).filter((c) =>
+            keysRestantes.has(chaveComposicao(comparada, c))
+          );
+          if (!comps.length) return;
+          emitHeader('subgrupo', subgrupo.nome || 'Subgrupo', nivel + 1);
+          comps.forEach((c) => emitComp(comparada, c));
+          return;
+        }
+        if (gItemId.startsWith('comp:')) {
+          const cUid = gItemId.slice(5);
+          const c = (comparada.composicoes || []).find((x) => x.uid === cUid);
+          if (c && keysRestantes.has(chaveComposicao(comparada, c))) emitComp(comparada, c);
+        }
+      });
+    };
+
+    const pacotesB = [...(comparada.pacotes || [])].sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
+    pacotesB.forEach((pacote) => {
+      const pItems = getContainerItems(comparada, pacoteContainer(pacote.id));
+      const temFilho = pItems.some((itemId) => {
+        if (itemId.startsWith('grupo:')) {
+          const uid = itemId.slice(6);
+          const grupo = (pacote.grupos || []).find((x) => x.uid === uid || x.id === uid);
+          if (!grupo) return false;
+          return getCompsDoNo(comparada.composicoes, { pacoteId: pacote.id, grupoId: grupo.id }).some(
+            (c) => keysRestantes.has(chaveComposicao(comparada, c))
+          );
+        }
+        if (itemId.startsWith('comp:')) {
+          const cUid = itemId.slice(5);
+          const c = (comparada.composicoes || []).find((x) => x.uid === cUid);
+          return c && keysRestantes.has(chaveComposicao(comparada, c));
+        }
+        return false;
+      });
+      if (!temFilho) return;
+
+      emitHeader('pacote', pacote.nome || 'Pacote', 0);
+      pItems.forEach((itemId) => {
+        if (itemId.startsWith('grupo:')) {
+          const uid = itemId.slice(6);
+          const grupo = (pacote.grupos || []).find((x) => x.uid === uid || x.id === uid);
+          if (grupo) walkGrupoB(pacote, grupo, 1);
+          return;
+        }
+        if (itemId.startsWith('comp:')) {
+          const cUid = itemId.slice(5);
+          const c = (comparada.composicoes || []).find((x) => x.uid === cUid);
+          if (c) emitComp(comparada, c);
+        }
+      });
+    });
+
+    // Fallback: linhas sem encaixe na árvore
+    restantes.filter((r) => r.key && !usedKeys.has(r.key)).forEach((row) => {
+      usedKeys.add(row.key);
+      resultado.push({ tipo: 'comp', row });
+    });
+  } else if (restantes.length) {
+    restantes.forEach((row) => {
+      if (row.key) usedKeys.add(row.key);
+      resultado.push({ tipo: 'comp', row });
+    });
+  }
+
+  return resultado;
 }
 
 export function diffInsumos(revA, revB, insumosCatalogo = []) {
