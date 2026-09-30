@@ -8,7 +8,9 @@ function ItemSelect({ itens, value, onChange, size, isInvalid, placeholder = 'Se
     (itens || []).forEach((it) => {
       if (it.id === excluirId) return;
       if (it.removido && it.id !== value) return;
-      const chave = it.pacoteNome || 'Sem pacote';
+      const pacote = it.pacoteNome || 'Sem pacote';
+      // itens de aditivo ficam agrupados sob o nome do aditivo
+      const chave = it.prefixo ? `${it.secaoNome} › ${pacote}` : pacote;
       if (!mapa.has(chave)) mapa.set(chave, []);
       mapa.get(chave).push(it);
     });

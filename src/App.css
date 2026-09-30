@@ -1415,3 +1415,16 @@ a:hover {
 .border-accent {
   border-color: var(--color-accent) !important;
 }
+
+/* Nome do orçamento clicável (abre a EAP) */
+.orcamento-nome-link {
+  color: var(--color-primary, #17324D);
+  font-size: inherit;
+  vertical-align: baseline;
+}
+
+.orcamento-nome-link:hover,
+.orcamento-nome-link:focus {
+  color: var(--color-primary-hover, #2F6B8A);
+  text-decoration: underline !important;
+}

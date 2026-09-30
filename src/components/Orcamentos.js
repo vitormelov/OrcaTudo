@@ -28,6 +28,8 @@ import { FaPlus, FaEdit, FaTrash, FaSearch, FaFileInvoiceDollar, FaEye, FaCopy, 
 import { useNavigate } from 'react-router-dom';
 import { copiarEAPCompleta, formatRevisao, getObraId, getRevisao, MOTIVO_REVISAO_INICIAL, getMotivoRevisaoExibicao, listarRevisoesDaObra } from '../utils/eapCopy';
 import { formatCurrency } from '../utils/formatters';
+import MenuAcoes from './MenuAcoes';
+import { TIPO_ADITIVO, TIPO_BASE, getTipo, isAditivo, listarBasesPorObra } from '../utils/tipoOrcamento';
 import { calcularValorComBdi } from '../utils/bdi';
 
 function Orcamentos() {
@@ -57,7 +59,9 @@ function Orcamentos() {
     descricao: '',
     cliente: '',
     endereco: '',
-    data: ''
+    data: '',
+    tipo: TIPO_BASE,
+    baseObraId: ''
   });
 
   const [copyFormData, setCopyFormData] = useState({
@@ -65,7 +69,9 @@ function Orcamentos() {
     descricao: '',
     cliente: '',
     endereco: '',
-    data: ''
+    data: '',
+    tipo: TIPO_BASE,
+    baseObraId: ''
   });
 
   useEffect(() => {
@@ -101,10 +107,86 @@ function Orcamentos() {
     }
   };
 
+  const basesDisponiveis = listarBasesPorObra(orcamentos);
+  const nomeBasePorObra = new Map(basesDisponiveis.map((b) => [b.obraId, b.orcamento.nome]));
+
+  const aditivosDaObra = (obraId) =>
+    orcamentos.filter((o) => isAditivo(o) && o.baseObraId === obraId);
+
+  /** Regras do tipo: aditivo exige base; base com aditivos vinculados não vira aditivo. */
+  const validarTipo = (dados, emEdicao) => {
+    if (dados.tipo !== TIPO_ADITIVO) return '';
+    if (!dados.baseObraId) return 'Selecione o orçamento base ao qual este aditivo pertence.';
+    if (emEdicao && dados.baseObraId === getObraId(emEdicao)) {
+      return 'Um orçamento não pode ser aditivo dele mesmo.';
+    }
+    if (emEdicao && !isAditivo(emEdicao) && aditivosDaObra(getObraId(emEdicao)).length > 0) {
+      return 'Este orçamento base possui aditivos vinculados e não pode ser transformado em aditivo.';
+    }
+    return '';
+  };
+
+  /** Campos Tipo + Orçamento base, usados nos formulários de novo, edição e cópia. */
+  const renderCamposTipo = (dados, setDados, emEdicao) => {
+    const obraPropria = emEdicao ? getObraId(emEdicao) : null;
+    const opcoesBase = basesDisponiveis.filter((b) => b.obraId !== obraPropria);
+    return (
+      <Row>
+        <Col md={4}>
+          <Form.Group className="mb-3">
+            <Form.Label>Tipo *</Form.Label>
+            <Form.Select
+              value={dados.tipo}
+              onChange={(e) => setDados({ ...dados, tipo: e.target.value, baseObraId: e.target.value === TIPO_ADITIVO ? dados.baseObraId : '' })}
+            >
+              <option value={TIPO_BASE}>Base</option>
+              <option value={TIPO_ADITIVO}>Aditivo</option>
+            </Form.Select>
+          </Form.Group>
+        </Col>
+        {dados.tipo === TIPO_ADITIVO && (
+          <Col md={8}>
+            <Form.Group className="mb-3">
+              <Form.Label>Orçamento base *</Form.Label>
+              <Form.Select
+                value={dados.baseObraId}
+                required
+                onChange={(e) => {
+                  const base = opcoesBase.find((b) => b.obraId === e.target.value)?.orcamento;
+                  setDados({
+                    ...dados,
+                    baseObraId: e.target.value,
+                    cliente: dados.cliente || base?.cliente || '',
+                    endereco: dados.endereco || base?.endereco || ''
+                  });
+                }}
+              >
+                <option value="">Selecione a base...</option>
+                {opcoesBase.map((b) => (
+                  <option key={b.obraId} value={b.obraId}>
+                    {b.orcamento.nome}{b.orcamento.cliente ? ` — ${b.orcamento.cliente}` : ''}
+                  </option>
+                ))}
+              </Form.Select>
+              {opcoesBase.length === 0 && (
+                <Form.Text className="text-danger">Não há orçamentos base cadastrados.</Form.Text>
+              )}
+            </Form.Group>
+          </Col>
+        )}
+      </Row>
+    );
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!podeEditar) {
       setError('Você não tem permissão para criar ou editar orçamentos.');
+      return;
+    }
+    const erroTipo = validarTipo(formData, editingOrcamento);
+    if (erroTipo) {
+      setError(erroTipo);
       return;
     }
     setLoading(true);
@@ -121,6 +203,8 @@ function Orcamentos() {
           cliente: formData.cliente,
           endereco: formData.endereco,
           data: formData.data,
+          tipo: formData.tipo,
+          baseObraId: formData.tipo === TIPO_ADITIVO ? formData.baseObraId : null,
           // Preservar todos os outros campos existentes
           updatedAt: new Date()
         };
@@ -134,6 +218,7 @@ function Orcamentos() {
         const obraId = `obra_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         const orcamentoData = {
           ...formData,
+          baseObraId: formData.tipo === TIPO_ADITIVO ? formData.baseObraId : null,
           composicoes: [],
           pacotes: [],
           userId: currentUser.uid,
@@ -169,14 +254,21 @@ function Orcamentos() {
       descricao: orcamento.descricao,
       cliente: orcamento.cliente,
       endereco: orcamento.endereco,
-      data: orcamento.data
+      data: orcamento.data,
+      tipo: getTipo(orcamento),
+      baseObraId: orcamento.baseObraId || ''
     });
     setShowModal(true);
   };
 
   const handleDelete = async (id) => {
     if (!podeEditar) return;
-    if (window.confirm('Tem certeza que deseja excluir este orçamento?')) {
+    const alvo = orcamentos.find((o) => o.id === id);
+    const qtdAditivos = alvo && !isAditivo(alvo) ? aditivosDaObra(getObraId(alvo)).length : 0;
+    const aviso = qtdAditivos
+      ? `\n\nAtenção: existem ${qtdAditivos} orçamento(s) aditivo(s) vinculado(s) a esta obra.`
+      : '';
+    if (window.confirm(`Tem certeza que deseja excluir este orçamento?${aviso}`)) {
       try {
         await deleteDoc(doc(db, 'orcamentos', id));
         fetchOrcamentos();
@@ -197,7 +289,9 @@ function Orcamentos() {
       descricao: '',
       cliente: '',
       endereco: '',
-      data: new Date().toISOString().split('T')[0]
+      data: new Date().toISOString().split('T')[0],
+      tipo: TIPO_BASE,
+      baseObraId: ''
     });
   };
 
@@ -207,7 +301,9 @@ function Orcamentos() {
       descricao: '',
       cliente: '',
       endereco: '',
-      data: ''
+      data: '',
+      tipo: TIPO_BASE,
+      baseObraId: ''
     });
   };
 
@@ -218,7 +314,9 @@ function Orcamentos() {
       descricao: orcamento.descricao || '',
       cliente: orcamento.cliente || '',
       endereco: orcamento.endereco || '',
-      data: new Date().toISOString().split('T')[0]
+      data: new Date().toISOString().split('T')[0],
+      tipo: getTipo(orcamento),
+      baseObraId: orcamento.baseObraId || ''
     });
     setShowCopyModal(true);
   };
@@ -277,6 +375,8 @@ function Orcamentos() {
         revisaoTravada: false,
         revisaoOrigemId: orcamento.id,
         motivoRevisao: motivo,
+        tipo: getTipo(orcamento),
+        baseObraId: isAditivo(orcamento) ? orcamento.baseObraId || null : null,
         pacotes: eapCopiada.pacotes,
         composicoes: eapCopiada.composicoes,
         bdiConfig: orcamento.bdiConfig ? { ...orcamento.bdiConfig } : null,
@@ -342,6 +442,11 @@ function Orcamentos() {
   const handleSubmitCopy = async (e) => {
     e.preventDefault();
     if (!podeEditar) return;
+    const erroTipo = validarTipo(copyFormData, null);
+    if (erroTipo) {
+      setError(erroTipo);
+      return;
+    }
     setLoading(true);
     setError('');
 
@@ -357,6 +462,7 @@ function Orcamentos() {
 
       const novoOrcamento = {
         ...copyFormData,
+        baseObraId: copyFormData.tipo === TIPO_ADITIVO ? copyFormData.baseObraId : null,
         userId: currentUser.uid,
         empresaId,
         createdAt: new Date(),
@@ -517,6 +623,8 @@ function Orcamentos() {
 
   const getSortValue = (orcamento, key) => {
     switch (key) {
+      case 'tipo':
+        return `${getTipo(orcamento)} ${(nomeBasePorObra.get(orcamento.baseObraId) || orcamento.nome || '').toLowerCase()}`;
       case 'nome':
         return (orcamento.nome || '').toLowerCase();
       case 'cliente':
@@ -672,6 +780,7 @@ function Orcamentos() {
             <Table responsive hover>
               <thead>
                 <tr>
+                  <SortableTh columnKey="tipo">Tipo</SortableTh>
                   <SortableTh columnKey="nome">Nome</SortableTh>
                   <SortableTh columnKey="revisao">Rev.</SortableTh>
                   <SortableTh columnKey="cliente">Cliente</SortableTh>
@@ -680,14 +789,35 @@ function Orcamentos() {
                   <SortableTh columnKey="valorBase">Valor s/ BDI</SortableTh>
                   <SortableTh columnKey="valorTotal">Valor c/ BDI</SortableTh>
                   <SortableTh columnKey="status">Status</SortableTh>
-                  <th>Ações</th>
+                  <th className="text-center">Ações</th>
                 </tr>
               </thead>
               <tbody>
                 {sortedOrcamentos.map((orcamento) => (
                   <tr key={orcamento.id}>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      {isAditivo(orcamento) ? (
+                        <Badge
+                          bg="warning"
+                          text="dark"
+                          style={{ cursor: 'help' }}
+                          title={`Aditivo de: ${nomeBasePorObra.get(orcamento.baseObraId) || 'base não encontrada'}`}
+                        >
+                          Aditivo
+                        </Badge>
+                      ) : (
+                        <Badge bg="dark">Base</Badge>
+                      )}
+                    </td>
                     <td>
-                      <strong>{orcamento.nome}</strong>
+                      <Button
+                        variant="link"
+                        className="p-0 fw-bold text-start text-decoration-none orcamento-nome-link"
+                        onClick={() => handleViewEAP(orcamento)}
+                        title="Abrir EAP"
+                      >
+                        {orcamento.nome}
+                      </Button>
                       {orcamento.revisaoTravada && (
                         <div><small className="text-muted">Obsoleto (somente leitura)</small></div>
                       )}
@@ -711,93 +841,30 @@ function Orcamentos() {
                         {orcamento.status}
                       </Badge>
                     </td>
-                    <td>
-                      <Button
-                        size="sm"
-                        variant="outline-info"
-                        className="me-2"
-                        onClick={() => handleViewEAP(orcamento)}
-                        title="Ver EAP"
-                      >
-                        <FaEye />
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline-dark"
-                        className="me-2"
-                        onClick={() => abrirHistoricoRevisoes(orcamento)}
-                        title="Histórico de revisões"
-                      >
-                        <FaHistory />
-                      </Button>
-                      {podeEditar && orcamento.revisaoTravada && (
-                        <Button
-                          size="sm"
-                          variant="outline-success"
-                          className="me-2"
-                          onClick={() => handleRestaurarObsoleto(orcamento)}
-                          disabled={loading}
-                          title="Restaurar para orçamentos atuais"
-                        >
-                          <FaUndo />
-                        </Button>
-                      )}
-                      {podeEditar && !orcamento.revisaoTravada && (
-                        <Button
-                          size="sm"
-                          variant="outline-secondary"
-                          className="me-2"
-                          onClick={() => handleArquivarObsoleto(orcamento)}
-                          disabled={loading}
-                          title="Arquivar (mover para obsoletos)"
-                        >
-                          <FaArchive />
-                        </Button>
-                      )}
-                      {podeEditar && !orcamento.revisaoTravada && (
-                        <Button
-                          size="sm"
-                          variant="outline-success"
-                          className="me-2"
-                          onClick={() => handleNovaRevisao(orcamento)}
-                          disabled={loading}
-                          title="Nova revisão"
-                        >
-                          <FaCodeBranch />
-                        </Button>
-                      )}
-                      {podeEditar && (
-                        <Button
-                          size="sm"
-                          variant="outline-warning"
-                          className="me-2"
-                          onClick={() => handleCopyOrcamento(orcamento)}
-                          title="Copiar Orçamento"
-                        >
-                          <FaCopy />
-                        </Button>
-                      )}
-                      {podeEditar && !orcamento.revisaoTravada && (
-                        <Button
-                          size="sm"
-                          variant="outline-primary"
-                          className="me-2"
-                          onClick={() => handleEdit(orcamento)}
-                          title="Editar"
-                        >
-                          <FaEdit />
-                        </Button>
-                      )}
-                      {podeEditar && (
-                        <Button
-                          size="sm"
-                          variant="outline-danger"
-                          onClick={() => handleDelete(orcamento.id)}
-                          title="Excluir"
-                        >
-                          <FaTrash />
-                        </Button>
-                      )}
+                    <td className="text-center">
+                      <MenuAcoes
+                        acoes={[
+                          { label: 'Histórico de revisões', icon: <FaHistory />, onClick: () => abrirHistoricoRevisoes(orcamento) },
+                          podeEditar && !orcamento.revisaoTravada && {
+                            label: 'Editar', icon: <FaEdit />, onClick: () => handleEdit(orcamento)
+                          },
+                          podeEditar && !orcamento.revisaoTravada && {
+                            label: 'Nova revisão', icon: <FaCodeBranch />, disabled: loading, onClick: () => handleNovaRevisao(orcamento)
+                          },
+                          podeEditar && {
+                            label: 'Copiar orçamento', icon: <FaCopy />, onClick: () => handleCopyOrcamento(orcamento)
+                          },
+                          podeEditar && !orcamento.revisaoTravada && {
+                            label: 'Arquivar (mover para obsoletos)', icon: <FaArchive />, disabled: loading, onClick: () => handleArquivarObsoleto(orcamento)
+                          },
+                          podeEditar && orcamento.revisaoTravada && {
+                            label: 'Restaurar para orçamentos atuais', icon: <FaUndo />, disabled: loading, onClick: () => handleRestaurarObsoleto(orcamento)
+                          },
+                          podeEditar && {
+                            label: 'Excluir', icon: <FaTrash />, perigo: true, divisor: true, onClick: () => handleDelete(orcamento.id)
+                          }
+                        ]}
+                      />
                     </td>
                   </tr>
                 ))}
@@ -820,6 +887,7 @@ function Orcamentos() {
         </Modal.Header>
         <Form onSubmit={handleSubmit}>
           <Modal.Body>
+            {renderCamposTipo(formData, setFormData, editingOrcamento)}
             <Row>
               <Col md={6}>
                 <Form.Group className="mb-3">
@@ -925,6 +993,8 @@ function Orcamentos() {
               </Alert>
             )}
             
+            {renderCamposTipo(copyFormData, setCopyFormData, null)}
+
             <Row>
               <Col md={6}>
                 <Form.Group className="mb-3">

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { createPortal } from 'react-dom';
 import { Button } from 'react-bootstrap';
 import { FaEllipsisV } from 'react-icons/fa';
+import './MenuAcoes.css';
 
 const MARGEM = 8;
 
@@ -11,7 +12,9 @@ const MARGEM = 8;
  * (o app rola o <body>, não a janela, o que confunde o posicionamento automático).
  * Abre à esquerda do botão; se não couber abaixo, abre para cima. Fecha ao
  * clicar fora, ao rolar, ao redimensionar ou com Esc.
- * `acoes`: [{ label, icon, onClick }]
+ * `acoes`: [{ label, icon, onClick, disabled?, perigo?, divisor? }]
+ *   perigo: texto em vermelho (ex.: Excluir); divisor: linha separadora antes do item.
+ * Itens falsy são ignorados, permitindo `cond && { ... }`.
  */
 function MenuAcoes({ acoes }) {
   const [aberto, setAberto] = useState(false);
@@ -67,7 +70,7 @@ function MenuAcoes({ acoes }) {
         ref={botaoRef}
         size="sm"
         variant="outline-secondary"
-        className="gestao-acoes-btn"
+        className="menu-acoes-btn"
         title="Ações"
         aria-haspopup="menu"
         aria-expanded={aberto}
@@ -79,7 +82,7 @@ function MenuAcoes({ acoes }) {
         <div
           ref={menuRef}
           role="menu"
-          className="gestao-menu-acoes dropdown-menu show"
+          className="menu-acoes dropdown-menu show"
           style={{
             position: 'fixed',
             left: pos?.left ?? 0,
@@ -87,20 +90,23 @@ function MenuAcoes({ acoes }) {
             visibility: pos ? 'visible' : 'hidden'
           }}
         >
-          {acoes.map((a) => (
-            <button
-              key={a.label}
-              type="button"
-              role="menuitem"
-              className="dropdown-item d-flex align-items-center"
-              onClick={() => {
-                fechar();
-                a.onClick();
-              }}
-            >
-              {a.icon && <span className="me-2 d-inline-flex">{a.icon}</span>}
-              {a.label}
-            </button>
+          {acoes.filter(Boolean).map((a) => (
+            <React.Fragment key={a.label}>
+              {a.divisor && <div className="dropdown-divider" />}
+              <button
+                type="button"
+                role="menuitem"
+                className={`dropdown-item d-flex align-items-center${a.perigo ? ' text-danger' : ''}`}
+                disabled={a.disabled}
+                onClick={() => {
+                  fechar();
+                  a.onClick();
+                }}
+              >
+                {a.icon && <span className="me-2 d-inline-flex">{a.icon}</span>}
+                {a.label}
+              </button>
+            </React.Fragment>
           ))}
         </div>,
         document.body

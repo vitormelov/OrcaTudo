@@ -224,6 +224,49 @@ export function montarArvore(itens) {
   return raiz;
 }
 
+/** Chave da seção do orçamento base dentro da gestão. */
+export const SECAO_BASE = 'base';
+
+/**
+ * Todos os itens da gestão (base + aditivos incluídos), marcados com a seção:
+ *   secao: 'base' ou o obraId do aditivo; secaoNome; prefixo ('AD1', 'AD2'...) nos aditivos.
+ */
+export function itensDaGestao(gestao) {
+  if (!gestao) return [];
+  const base = (gestao.itens || []).map((it) => ({ ...it, secao: SECAO_BASE, secaoNome: 'Orçamento base', prefixo: '' }));
+  const adit = (gestao.aditivos || []).flatMap((ad, i) =>
+    (ad.itens || []).map((it) => ({
+      ...it,
+      secao: ad.obraId,
+      secaoNome: `Aditivo ${i + 1} — ${ad.nome || ''}`.trim(),
+      prefixo: `AD${i + 1}`
+    }))
+  );
+  return [...base, ...adit];
+}
+
+/** Rótulo do item fora da árvore (ex.: "1.2.1" na base, "AD1 · 1.2.1" num aditivo). */
+export function rotuloItem(it) {
+  if (!it) return '';
+  return it.prefixo ? `${it.prefixo} · ${it.numero}` : it.numero;
+}
+
+const CAMPOS_RUNTIME = ['secao', 'secaoNome', 'prefixo'];
+const limparItem = (it) => {
+  const r = { ...it };
+  CAMPOS_RUNTIME.forEach((k) => delete r[k]);
+  return r;
+};
+
+/** Aplica `patch` ao item (na base ou em um aditivo). Devolve { itens, aditivos } para salvar. */
+export function atualizarItemGestao(gestao, itemId, patch) {
+  const aplica = (lista) => (lista || []).map((it) => (it.id === itemId ? limparItem({ ...it, ...patch }) : it));
+  return {
+    itens: aplica(gestao.itens),
+    aditivos: (gestao.aditivos || []).map((ad) => ({ ...ad, itens: aplica(ad.itens) }))
+  };
+}
+
 export function totalCompra(compra) {
   return (compra?.linhas || []).reduce((s, l) => s + (Number(l.valorTotal) || 0), 0);
 }

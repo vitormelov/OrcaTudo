@@ -14,16 +14,18 @@ import { formatCurrency } from '../../utils/formatters';
 import { formatRevisao, getObraId, getRevisao } from '../../utils/eapCopy';
 import { calcularValorComBdi } from '../../utils/bdi';
 import {
-  STATUS_ITEM, consolidarItens, formatDataCurta, formatDataISO, montarArvore, resumoGestao, totalCompra
+  SECAO_BASE, STATUS_ITEM, atualizarItemGestao, consolidarItens, formatDataCurta, formatDataISO,
+  itensDaGestao, montarArvore, resumoGestao, rotuloItem, totalCompra
 } from '../../utils/gestao';
+import { isAditivo } from '../../utils/tipoOrcamento';
 import {
-  atualizarGestao, carregarGestao, carregarOrcamento, excluirAjuste, excluirCompra,
-  importarCompras, listarOrcamentosAprovados, ressincronizarGestao, salvarAjuste, salvarCompra
+  atualizarGestao, carregarGestao, carregarOrcamento, excluirAjuste, excluirCompra, importarCompras,
+  incluirAditivo, listarOrcamentosAprovados, ressincronizarAditivo, ressincronizarGestao, salvarAjuste, salvarCompra
 } from './gestaoService';
 import CompraModal from './CompraModal';
 import AjusteModal from './AjusteModal';
 import ImportarInformakonModal from './ImportarInformakonModal';
-import MenuAcoes from './MenuAcoes';
+import MenuAcoes from '../MenuAcoes';
 import './gestao.css';
 
 function Kpi({ label, value, className = '', sub }) {
@@ -65,7 +67,8 @@ function GestaoObra() {
   const [gestao, setGestao] = useState(null);
   const [compras, setCompras] = useState([]);
   const [ajustes, setAjustes] = useState([]);
-  const [revisaoNova, setRevisaoNova] = useState(null);
+  const [aprovados, setAprovados] = useState([]);
+  const [processandoAditivo, setProcessandoAditivo] = useState('');
 
   const [aba, setAba] = useState('itens');
   const [busca, setBusca] = useState('');
@@ -99,12 +102,7 @@ function GestaoObra() {
       setGestao(r.gestao);
       setCompras(r.compras);
       setAjustes(r.ajustes);
-      const aprovados = await listarOrcamentosAprovados(empresaId);
-      setRevisaoNova(
-        aprovados
-          .filter((o) => getObraId(o) === r.gestao.obraId && o.id !== r.gestao.orcamentoId && getRevisao(o) > (r.gestao.revisao ?? 0))
-          .sort((a, b) => getRevisao(b) - getRevisao(a))[0] || null
-      );
+      setAprovados(await listarOrcamentosAprovados(empresaId));
     } catch (err) {
       console.error(err);
       setError('Erro ao carregar: ' + err.message);
@@ -121,11 +119,48 @@ function GestaoObra() {
   }
 
   const itens = useMemo(
-    () => (gestao ? consolidarItens(gestao.itens, compras, ajustes) : []),
+    () => (gestao ? consolidarItens(itensDaGestao(gestao), compras, ajustes) : []),
     [gestao, compras, ajustes]
   );
   const itensPorId = useMemo(() => new Map(itens.map((it) => [it.id, it])), [itens]);
   const resumo = useMemo(() => resumoGestao(itens), [itens]);
+
+  // revisão aprovada mais nova do orçamento base
+  const revisaoNova = useMemo(() => {
+    if (!gestao) return null;
+    return aprovados
+      .filter((o) => !isAditivo(o) && getObraId(o) === gestao.obraId && o.id !== gestao.orcamentoId && getRevisao(o) > (gestao.revisao ?? 0))
+      .sort((a, b) => getRevisao(b) - getRevisao(a))[0] || null;
+  }, [aprovados, gestao]);
+
+  // aditivos aprovados desta obra que ainda não entraram na gestão (uma entrada por obra do aditivo)
+  const aditivosPendentes = useMemo(() => {
+    if (!gestao) return [];
+    const incluidos = new Set((gestao.aditivos || []).map((a) => a.obraId));
+    const porObra = new Map();
+    aprovados
+      .filter((o) => isAditivo(o) && o.baseObraId === gestao.obraId && !incluidos.has(getObraId(o)))
+      .forEach((o) => {
+        const atual = porObra.get(getObraId(o));
+        if (!atual || getRevisao(o) > getRevisao(atual)) porObra.set(getObraId(o), o);
+      });
+    return [...porObra.values()];
+  }, [aprovados, gestao]);
+
+  // revisão aprovada mais nova de cada aditivo já incluído
+  const revisaoNovaAditivo = useMemo(() => {
+    const m = new Map();
+    (gestao?.aditivos || []).forEach((ad) => {
+      const nova = aprovados
+        .filter((o) => getObraId(o) === ad.obraId && o.id !== ad.orcamentoId && getRevisao(o) > (ad.revisao ?? 0))
+        .sort((a, b) => getRevisao(b) - getRevisao(a))[0];
+      if (nova) m.set(ad.obraId, nova);
+    });
+    return m;
+  }, [aprovados, gestao]);
+
+  const resumoBase = useMemo(() => resumoGestao(itens.filter((it) => it.secao === SECAO_BASE)), [itens]);
+  const resumoAditivos = useMemo(() => resumoGestao(itens.filter((it) => it.secao !== SECAO_BASE)), [itens]);
 
   const refsExistentes = useMemo(() => {
     const s = new Set();
@@ -151,20 +186,40 @@ function GestaoObra() {
       if (filtroStatus && it.status !== filtroStatus) return false;
       if (it.removido && it.comprado === 0 && it.ajustes === 0) return false;
       if (!t) return true;
-      return [it.numero, it.codigo, it.descricao, it.caminho].some((x) => String(x || '').toLowerCase().includes(t));
+      return [rotuloItem(it), it.codigo, it.descricao, it.caminho].some((x) => String(x || '').toLowerCase().includes(t));
     });
   }, [itens, busca, filtroStatus]);
 
-  const arvore = useMemo(() => montarArvore(itensFiltrados), [itensFiltrados]);
+  // seções da tabela: orçamento base e, abaixo, cada aditivo separado
+  const secoes = useMemo(() => {
+    if (!gestao) return [];
+    const lista = [{
+      key: SECAO_BASE,
+      titulo: 'Orçamento base',
+      detalhe: `${gestao.nome || ''} · Rev. ${formatRevisao(gestao.revisao)}`,
+      aditivo: null
+    }];
+    (gestao.aditivos || []).forEach((ad, i) => lista.push({
+      key: ad.obraId,
+      titulo: `Aditivo ${i + 1}`,
+      detalhe: `${ad.nome || ''} · Rev. ${formatRevisao(ad.revisao)}`,
+      aditivo: ad
+    }));
+    return lista.map((sec) => {
+      const doFiltro = itensFiltrados.filter((it) => it.secao === sec.key);
+      return { ...sec, arvore: montarArvore(doFiltro), resumo: resumoGestao(doFiltro) };
+    });
+  }, [gestao, itensFiltrados]);
   const resumoFiltrado = useMemo(() => resumoGestao(itensFiltrados), [itensFiltrados]);
   const todosNos = useMemo(() => {
     const lista = [];
-    const walk = (ns) => ns.forEach((n) => {
+    const walk = (secao, ns) => ns.forEach((n) => {
       if (n.tipo !== 'no') return;
-      lista.push(n.numero);
-      walk(n.filhos);
+      lista.push(`${secao}:${n.numero}`);
+      walk(secao, n.filhos);
     });
-    walk(montarArvore(itens));
+    const secoesIds = new Set(itens.map((it) => it.secao));
+    secoesIds.forEach((sec) => walk(sec, montarArvore(itens.filter((it) => it.secao === sec))));
     return lista;
   }, [itens]);
 
@@ -192,17 +247,18 @@ function GestaoObra() {
   const CLASSE_NIVEL = ['gt-pacote', 'gt-grupo', 'gt-subgrupo'];
   const INDENT = 12;
 
-  function renderNo(n, profundidade = 0) {
+  function renderNo(n, secao, profundidade = 0) {
     if (n.tipo === 'item') return renderItem(n.item, profundidade);
     const r = resumoGestao(n.itens);
-    const aberto = !recolhidos.has(n.numero);
+    const chaveNo = `${secao}:${n.numero}`;
+    const aberto = !recolhidos.has(chaveNo);
     const saldo = r.verbaAtual - r.comprado;
     const ajuste = r.verbaAtual - r.verbaOrcada;
     return (
-      <Fragment key={`no-${n.numero}`}>
+      <Fragment key={`no-${chaveNo}`}>
         <tr className={CLASSE_NIVEL[n.nivel] || 'gt-subgrupo'}>
           <td className="centro">
-            <Button variant="link" size="sm" className="gestao-toggle" onClick={() => toggleNo(n.numero)} title={aberto ? 'Recolher' : 'Expandir'}>
+            <Button variant="link" size="sm" className="gestao-toggle" onClick={() => toggleNo(chaveNo)} title={aberto ? 'Recolher' : 'Expandir'}>
               {aberto ? <FaChevronDown /> : <FaChevronRight />}
             </Button>
           </td>
@@ -219,7 +275,67 @@ function GestaoObra() {
           <td><Consumo comprado={r.comprado} verba={r.verbaAtual} /></td>
           <td />
         </tr>
-        {aberto && n.filhos.map((f) => renderNo(f, profundidade + 1))}
+        {aberto && n.filhos.map((f) => renderNo(f, secao, profundidade + 1))}
+      </Fragment>
+    );
+  }
+
+  /** Faixa de título da seção (base / aditivo) com os totais dela. */
+  function renderSecao(sec) {
+    const r = sec.resumo;
+    const saldo = r.verbaAtual - r.comprado;
+    const chave = `secao:${sec.key}`;
+    const aberta = !recolhidos.has(chave);
+    const novaRev = sec.aditivo ? revisaoNovaAditivo.get(sec.aditivo.obraId) : null;
+    return (
+      <Fragment key={chave}>
+        <tr className={`gt-secao ${sec.aditivo ? 'gt-secao-aditivo' : ''}`}>
+          <td className="centro">
+            <Button variant="link" size="sm" className="gestao-toggle" onClick={() => toggleNo(chave)} title={aberta ? 'Recolher' : 'Expandir'}>
+              {aberta ? <FaChevronDown /> : <FaChevronRight />}
+            </Button>
+          </td>
+          <td colSpan={4} className="desc">
+            <span className="gt-secao-titulo">{sec.titulo}</span>
+            <span className="gt-secao-detalhe">{sec.detalhe}</span>
+            {novaRev && <Badge bg="warning" text="dark" className="ms-2">Rev. {formatRevisao(getRevisao(novaRev))} aprovada</Badge>}
+          </td>
+          <td className="num">{formatCurrency(r.verbaOrcada)}</td>
+          <td className="num">{Math.abs(r.verbaAtual - r.verbaOrcada) > 0.004 ? formatCurrency(r.verbaAtual - r.verbaOrcada) : '—'}</td>
+          <td className="num">{formatCurrency(r.comprado)}</td>
+          <td className="num">{formatCurrency(saldo)}</td>
+          <td><Consumo comprado={r.comprado} verba={r.verbaAtual} /></td>
+          <td className="centro">
+            {podeEditar && (
+              <MenuAcoes
+                acoes={[
+                  sec.aditivo
+                    ? {
+                        label: novaRev ? `Usar Rev. ${formatRevisao(getRevisao(novaRev))} do aditivo` : 'Atualizar verba do aditivo',
+                        icon: <FaSyncAlt />,
+                        disabled: !!processandoAditivo,
+                        onClick: () => handleSincronizarAditivo(sec.aditivo, novaRev?.id || sec.aditivo.orcamentoId)
+                      }
+                    : {
+                        label: revisaoNova ? `Usar Rev. ${formatRevisao(getRevisao(revisaoNova))} da base` : 'Atualizar verba da base',
+                        icon: <FaSyncAlt />,
+                        onClick: () => setShowSync(true)
+                      }
+                ]}
+              />
+            )}
+          </td>
+        </tr>
+        {aberta && (sec.arvore.length > 0
+          ? sec.arvore.map((n) => renderNo(n, sec.key))
+          : (
+            <tr className="gt-item">
+              <td />
+              <td colSpan={10} className="desc text-muted">
+                {busca || filtroStatus ? 'Nenhum item desta seção no filtro.' : 'Sem itens.'}
+              </td>
+            </tr>
+          ))}
       </Fragment>
     );
   }
@@ -343,10 +459,10 @@ function GestaoObra() {
   }
 
   async function toggleEncerrado(item) {
-    const novos = gestao.itens.map((it) => (it.id === item.id ? { ...it, encerrado: !it.encerrado } : it));
+    const patch = atualizarItemGestao(gestao, item.id, { encerrado: !item.encerrado });
     try {
-      await atualizarGestao(gestao.id, { itens: novos });
-      setGestao({ ...gestao, itens: novos });
+      await atualizarGestao(gestao.id, patch);
+      setGestao({ ...gestao, ...patch });
     } catch (err) {
       setError('Erro ao atualizar item: ' + err.message);
     }
@@ -360,7 +476,6 @@ function GestaoObra() {
       const atualizada = await ressincronizarGestao(gestao, orc, compras);
       setGestao(atualizada);
       setShowSync(false);
-      setRevisaoNova(null);
       setInfo(`Linha de base atualizada com a Rev. ${formatRevisao(getRevisao(orc))} do orçamento.`);
     } catch (err) {
       setError('Erro ao atualizar a linha de base: ' + err.message);
@@ -369,19 +484,47 @@ function GestaoObra() {
     }
   }
 
+  async function handleIncluirAditivo(orcamento) {
+    setProcessandoAditivo(orcamento.id);
+    try {
+      const atualizada = await incluirAditivo(gestao, orcamento);
+      setGestao(atualizada);
+      setInfo(`Aditivo "${orcamento.nome}" incluído na gestão.`);
+    } catch (err) {
+      setError('Erro ao incluir aditivo: ' + err.message);
+    } finally {
+      setProcessandoAditivo('');
+    }
+  }
+
+  async function handleSincronizarAditivo(aditivo, orcamentoAlvoId) {
+    setProcessandoAditivo(aditivo.obraId);
+    try {
+      const orc = await carregarOrcamento(orcamentoAlvoId);
+      if (!orc) throw new Error('Orçamento aditivo não encontrado');
+      const atualizada = await ressincronizarAditivo(gestao, aditivo.obraId, orc, compras);
+      setGestao(atualizada);
+      setInfo(`Verba do aditivo "${orc.nome}" atualizada com a Rev. ${formatRevisao(getRevisao(orc))}.`);
+    } catch (err) {
+      setError('Erro ao atualizar o aditivo: ' + err.message);
+    } finally {
+      setProcessandoAditivo('');
+    }
+  }
+
   async function exportarExcel() {
     const XLSX = await import('xlsx');
     const wb = XLSX.utils.book_new();
-    const cab = ['Item', 'Código', 'Descrição', 'Un.', 'Qtd.', 'Verba orçada', 'Ajustes', 'Verba atual', 'Comprado', 'Saldo', '% consumo', 'Situação'];
+    const cab = ['Orçamento', 'Item', 'Código', 'Descrição', 'Un.', 'Qtd.', 'Verba orçada', 'Ajustes', 'Verba atual', 'Comprado', 'Saldo', '% consumo', 'Situação'];
     const linhas = itens
       .filter((it) => !(it.removido && it.comprado === 0))
       .map((it) => [
-        it.numero, it.codigo, it.descricao + (it.removido ? ' (removido)' : ''), it.unidade, it.quantidade,
+        it.secaoNome, it.numero, it.codigo, it.descricao + (it.removido ? ' (removido)' : ''), it.unidade, it.quantidade,
         it.verbaOrcada, it.ajustes, it.verbaAtual, it.comprado, it.saldo,
         Number.isFinite(it.consumo) ? Math.round(it.consumo * 10000) / 100 : '',
         STATUS_ITEM[it.status]?.label
       ]);
-    linhas.push(['', '', 'TOTAL', '', '', resumo.verbaOrcada, resumo.verbaAtual - resumo.verbaOrcada, resumo.verbaAtual, resumo.comprado, resumo.verbaAtual - resumo.comprado, '', '']);
+    linhas.push(['', '', '', 'TOTAL', '', '', resumo.verbaOrcada, resumo.verbaAtual - resumo.verbaOrcada, resumo.verbaAtual, resumo.comprado, resumo.verbaAtual - resumo.comprado, '', '']);
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([cab, ...linhas]), 'Verbas por item');
 
     const cabC = ['Data', 'Documento', 'Fornecedor', 'Origem', 'Item', 'Descrição item', 'Descrição compra', 'Un.', 'Qtd.', 'Vl. unit.', 'Vl. total'];
@@ -391,7 +534,7 @@ function GestaoObra() {
         const it = itensPorId.get(l.itemId);
         linhasC.push([
           formatDataISO(c.data), c.documento, c.fornecedor, c.origem === 'informakon' ? 'Informakon' : 'Manual',
-          it?.numero || '', it?.descricao || '', l.descricao, l.unidade, l.quantidade, l.valorUnitario, l.valorTotal
+          rotuloItem(it), it?.descricao || '', l.descricao, l.unidade, l.quantidade, l.valorUnitario, l.valorTotal
         ]);
       })
     );
@@ -400,7 +543,7 @@ function GestaoObra() {
     const cabA = ['Data', 'Tipo', 'Origem', 'Destino', 'Valor', 'Motivo'];
     const linhasA = ajustes.map((a) => [
       formatDataISO(a.data), a.tipo === 'remanejamento' ? 'Remanejamento' : 'Aditivo/supressão',
-      itensPorId.get(a.itemOrigemId)?.numero || '', itensPorId.get(a.itemDestinoId)?.numero || '', a.valor, a.motivo
+      rotuloItem(itensPorId.get(a.itemOrigemId)), rotuloItem(itensPorId.get(a.itemDestinoId)), a.valor, a.motivo
     ]);
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([cabA, ...linhasA]), 'Ajustes de verba');
 
@@ -480,12 +623,33 @@ function GestaoObra() {
         </Alert>
       )}
 
+      {aditivosPendentes.length > 0 && podeEditar && (
+        <Alert variant="info">
+          <div className="mb-2">
+            {aditivosPendentes.length === 1 ? 'Há um orçamento aditivo aprovado' : `Há ${aditivosPendentes.length} orçamentos aditivos aprovados`} desta
+            obra fora da gestão. Ao incluir, as verbas do aditivo entram em uma seção separada, abaixo do orçamento base.
+          </div>
+          {aditivosPendentes.map((o) => (
+            <div key={o.id} className="d-flex flex-wrap align-items-center gap-2 py-1">
+              <Badge bg="warning" text="dark">Aditivo</Badge>
+              <strong>{o.nome}</strong>
+              <span className="text-muted">Rev. {formatRevisao(getRevisao(o))} · custo direto {formatCurrency(o.valorTotal || 0)}</span>
+              <Button size="sm" className="ms-auto" disabled={!!processandoAditivo} onClick={() => handleIncluirAditivo(o)}>
+                {processandoAditivo === o.id ? 'Incluindo...' : 'Incluir na gestão'}
+              </Button>
+            </div>
+          ))}
+        </Alert>
+      )}
+
       <Row className="g-3 mb-4">
         <Col xs={12} sm={6} xl>
           <Kpi
             label="Verba atual (custo direto)"
             value={formatCurrency(resumo.verbaAtual)}
-            sub={resumo.verbaAtual !== resumo.verbaOrcada ? `Orçada: ${formatCurrency(resumo.verbaOrcada)}` : (vendaComBdi ? `Venda c/ BDI: ${formatCurrency(vendaComBdi)}` : null)}
+            sub={(gestao.aditivos || []).length > 0
+              ? `Base ${formatCurrency(resumoBase.verbaAtual)} · Aditivos ${formatCurrency(resumoAditivos.verbaAtual)}`
+              : (resumo.verbaAtual !== resumo.verbaOrcada ? `Orçada: ${formatCurrency(resumo.verbaOrcada)}` : (vendaComBdi ? `Venda c/ BDI: ${formatCurrency(vendaComBdi)}` : null))}
           />
         </Col>
         <Col xs={12} sm={6} xl>
@@ -557,17 +721,14 @@ function GestaoObra() {
                   </tr>
                 </thead>
                 <tbody>
-                  {arvore.length === 0 && (
-                    <tr><td colSpan={11} className="centro text-muted py-4">Nenhum item encontrado.</td></tr>
-                  )}
-                  {arvore.map((n) => renderNo(n))}
+                  {secoes.map((sec) => renderSecao(sec))}
                 </tbody>
-                {arvore.length > 0 && (
+                {itensFiltrados.length > 0 && (
                   <tfoot>
                     <tr>
                       <td />
                       <td />
-                      <td>TOTAL{busca || filtroStatus ? ' (filtrado)' : ''}</td>
+                      <td>TOTAL{(gestao.aditivos || []).length ? ' (BASE + ADITIVOS)' : ''}{busca || filtroStatus ? ' — filtrado' : ''}</td>
                       <td />
                       <td />
                       <td className="num">{formatCurrency(resumoFiltrado.verbaOrcada)}</td>
@@ -626,7 +787,7 @@ function GestaoObra() {
                       <td className="desc">
                         {[...new Set((c.linhas || []).map((l) => l.itemId))].map((iid) => {
                           const it = itensPorId.get(iid);
-                          return <div key={iid}>{it ? `${it.numero} — ${it.descricao}` : 'Item não encontrado'}</div>;
+                          return <div key={iid}>{it ? `${rotuloItem(it)} — ${it.descricao}` : 'Item não encontrado'}</div>;
                         })}
                       </td>
                       <td className="centro">{c.origem === 'informakon' ? <Badge bg="info">Informakon</Badge> : <Badge bg="secondary">Manual</Badge>}</td>
@@ -695,8 +856,8 @@ function GestaoObra() {
                       <tr key={a.id} className="gt-item">
                         <td>{formatDataISO(a.data)}</td>
                         <td>{a.tipo === 'remanejamento' ? 'Remanejamento' : a.valor < 0 ? 'Supressão' : 'Aditivo'}</td>
-                        <td className="desc">{de ? `${de.numero} — ${de.descricao}` : '—'}</td>
-                        <td className="desc">{para ? `${para.numero} — ${para.descricao}` : '—'}</td>
+                        <td className="desc">{de ? `${rotuloItem(de)} — ${de.descricao}` : '—'}</td>
+                        <td className="desc">{para ? `${rotuloItem(para)} — ${para.descricao}` : '—'}</td>
                         <td className={`num ${a.valor < 0 ? 'text-danger' : ''}`}>{formatCurrency(a.valor)}</td>
                         <td className="desc">{a.motivo}</td>
                         <td className="centro">

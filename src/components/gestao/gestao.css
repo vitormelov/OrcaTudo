@@ -125,21 +125,6 @@
   color: var(--color-text-secondary, #687481);
 }
 
-.gestao-acoes-btn {
-  padding: 2px 8px;
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.gestao-menu-acoes {
-  max-width: none;
-  font-size: 13px;
-}
-
-.gestao-menu-acoes .dropdown-item {
-  padding: 6px 10px;
-}
-
 .gestao-toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -147,4 +132,43 @@
   align-items: center;
   padding: 12px 16px;
   border-bottom: 1px solid var(--color-border, #dde3e8);
+}
+
+/* Faixas de seção: orçamento base e aditivos */
+.gestao-tabela tr.gt-secao td {
+  background: var(--color-primary-hover, #2F6B8A);
+  color: #fff;
+  font-weight: 600;
+  border-bottom: 0;
+}
+
+.gestao-tabela tr.gt-secao-aditivo td {
+  background: #9A6B12;
+}
+
+.gestao-tabela tr.gt-secao .gt-secao-titulo {
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.gestao-tabela tr.gt-secao .gt-secao-detalhe {
+  margin-left: 8px;
+  font-weight: 400;
+  opacity: 0.9;
+}
+
+.gestao-tabela tr.gt-secao .gestao-toggle,
+.gestao-tabela tr.gt-secao .gestao-consumo span {
+  color: #fff;
+}
+
+.gestao-tabela tr.gt-secao .menu-acoes-btn {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.6);
+}
+
+.gestao-tabela tr.gt-secao .menu-acoes-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
 }

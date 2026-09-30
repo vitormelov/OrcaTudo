@@ -1,0 +1,21 @@
+/* Botão ⋮ e menu de ações usados nas tabelas (Orçamentos, Gestão) */
+.menu-acoes-btn {
+  padding: 2px 8px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.menu-acoes {
+  max-width: none;
+  font-size: 13px;
+  padding: 4px;
+}
+
+.menu-acoes .dropdown-item {
+  padding: 6px 10px;
+  border-radius: 4px;
+}
+
+.menu-acoes .dropdown-divider {
+  margin: 4px 0;
+}

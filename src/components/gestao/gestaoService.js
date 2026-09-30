@@ -73,6 +73,7 @@ export async function iniciarGestao(orcamento, { empresaId, userId }) {
     userId,
     orcamentoId: orcamento.id,
     itens,
+    aditivos: [],
     verbaTotal: round2(itens.reduce((s, it) => s + it.verbaOrcada, 0)),
     mapaInformakon: {},
     informakon: { codigoObra: '' },
@@ -84,7 +85,6 @@ export async function iniciarGestao(orcamento, { empresaId, userId }) {
   return { id: orcamento.id, ...dados };
 }
 
-/** Atualiza a linha de base com o orçamento atual, preservando vínculos das compras. */
 export async function carregarOrcamento(orcamentoId) {
   const snap = await getDoc(doc(db, 'orcamentos', orcamentoId));
   return snap.exists() ? { id: snap.id, ...snap.data() } : null;
@@ -108,6 +108,44 @@ export async function ressincronizarGestao(gestao, orcamento, compras) {
   };
   await updateDoc(doc(db, COL_OBRAS, gestao.id), patch);
   return { ...gestao, ...patch };
+}
+
+const somaVerba = (itens) => round2(itens.filter((it) => !it.removido).reduce((s, it) => s + it.verbaOrcada, 0));
+
+function dadosAditivo(orcamento, itens) {
+  return {
+    obraId: getObraId(orcamento),
+    orcamentoId: orcamento.id,
+    nome: orcamento.nome || '',
+    revisao: getRevisao(orcamento),
+    bdiConfig: orcamento.bdiConfig || null,
+    itens,
+    verbaTotal: somaVerba(itens),
+    baselineEm: new Date()
+  };
+}
+
+/** Inclui um orçamento aditivo aprovado na gestão da obra base (seção separada). */
+export async function incluirAditivo(gestao, orcamento) {
+  const aditivos = [
+    ...(gestao.aditivos || []),
+    { ...dadosAditivo(orcamento, gerarItensBaseline(orcamento)), incluidoEm: new Date() }
+  ];
+  await updateDoc(doc(db, COL_OBRAS, gestao.id), { aditivos, updatedAt: new Date() });
+  return { ...gestao, aditivos };
+}
+
+/** Atualiza a linha de base de um aditivo (mesma revisão ou revisão aprovada mais nova). */
+export async function ressincronizarAditivo(gestao, aditivoObraId, orcamento, compras) {
+  const comCompras = new Set();
+  compras.forEach((c) => (c.linhas || []).forEach((l) => comCompras.add(l.itemId)));
+  const aditivos = (gestao.aditivos || []).map((ad) => {
+    if (ad.obraId !== aditivoObraId) return ad;
+    const itens = ressincronizarItens(ad.itens, gerarItensBaseline(orcamento), comCompras);
+    return { ...ad, ...dadosAditivo(orcamento, itens) };
+  });
+  await updateDoc(doc(db, COL_OBRAS, gestao.id), { aditivos, updatedAt: new Date() });
+  return { ...gestao, aditivos };
 }
 
 export async function atualizarGestao(gestaoId, patch) {
@@ -206,4 +244,22 @@ export async function salvarAjuste(ajuste, { empresaId, userId, gestaoId }) {
 
 export async function excluirAjuste(id) {
   await deleteDoc(doc(db, COL_AJUSTES, id));
+}
+
+/**
+ * Exclui a obra da gestão: apaga as compras, os ajustes de verba e o documento da gestão.
+ * O orçamento não é alterado e volta a aparecer para "Iniciar gestão".
+ */
+export async function excluirGestao(empresaId, gestaoId) {
+  const filtro = (col) =>
+    getDocs(query(collection(db, col), where('empresaId', '==', empresaId), where('gestaoId', '==', gestaoId)));
+  const [comprasSnap, ajustesSnap] = await Promise.all([filtro(COL_COMPRAS), filtro(COL_AJUSTES)]);
+  const refs = [...comprasSnap.docs, ...ajustesSnap.docs].map((d) => d.ref);
+  const CHUNK = 400;
+  for (let i = 0; i < refs.length; i += CHUNK) {
+    const batch = writeBatch(db);
+    refs.slice(i, i + CHUNK).forEach((r) => batch.delete(r));
+    await batch.commit();
+  }
+  await deleteDoc(doc(db, COL_OBRAS, gestaoId));
 }

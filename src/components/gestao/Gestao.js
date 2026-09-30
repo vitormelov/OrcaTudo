@@ -1,13 +1,16 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, Badge, Button, Card, Col, ProgressBar, Row, Spinner, Table } from 'react-bootstrap';
 import { useNavigate } from 'react-router-dom';
-import { FaClipboardCheck, FaPlay, FaEye, FaExclamationTriangle } from 'react-icons/fa';
+import { FaClipboardCheck, FaPlay, FaEye, FaExclamationTriangle, FaTrash } from 'react-icons/fa';
 import { useAuth } from '../../contexts/AuthContext';
 import { useEmpresa } from '../../contexts/EmpresaContext';
 import { formatCurrency } from '../../utils/formatters';
 import { formatRevisao, getObraId, getRevisao } from '../../utils/eapCopy';
-import { consolidarItens, resumoGestao } from '../../utils/gestao';
+import { SECAO_BASE, consolidarItens, itensDaGestao, resumoGestao } from '../../utils/gestao';
+import { isAditivo } from '../../utils/tipoOrcamento';
+import MenuAcoes from '../MenuAcoes';
 import {
+  excluirGestao,
   iniciarGestao,
   listarAjustesEmpresa,
   listarComprasEmpresa,
@@ -26,6 +29,7 @@ function Gestao() {
   const [compras, setCompras] = useState([]);
   const [ajustes, setAjustes] = useState([]);
   const [iniciando, setIniciando] = useState('');
+  const [excluindo, setExcluindo] = useState('');
 
   useEffect(() => {
     if (!empresaId) return;
@@ -59,16 +63,25 @@ function Gestao() {
     return gestoes
       .map((g) => {
         const itens = consolidarItens(
-          g.itens || [],
+          itensDaGestao(g),
           compras.filter((c) => c.gestaoId === g.id),
           ajustes.filter((a) => a.gestaoId === g.id)
         );
         const resumo = resumoGestao(itens);
-        // revisão aprovada mais nova da mesma obra ainda não refletida na gestão
+        const resumoBase = resumoGestao(itens.filter((it) => it.secao === SECAO_BASE));
+        const resumoAditivos = resumoGestao(itens.filter((it) => it.secao !== SECAO_BASE));
+        // revisão aprovada mais nova da base ainda não refletida na gestão
         const novaRevisao = aprovados.find(
-          (o) => getObraId(o) === g.obraId && o.id !== g.orcamentoId && getRevisao(o) > (g.revisao ?? 0)
+          (o) => !isAditivo(o) && getObraId(o) === g.obraId && o.id !== g.orcamentoId && getRevisao(o) > (g.revisao ?? 0)
         );
-        return { gestao: g, resumo, novaRevisao };
+        // aditivos aprovados desta obra que ainda não foram incluídos
+        const incluidos = new Set((g.aditivos || []).map((a) => a.obraId));
+        const aditivosPendentes = new Set(
+          aprovados
+            .filter((o) => isAditivo(o) && o.baseObraId === g.obraId && !incluidos.has(getObraId(o)))
+            .map((o) => getObraId(o))
+        ).size;
+        return { gestao: g, resumo, resumoBase, resumoAditivos, novaRevisao, aditivosPendentes };
       })
       .sort((a, b) => (a.gestao.nome || '').localeCompare(b.gestao.nome || ''));
   }, [gestoes, compras, ajustes, aprovados]);
@@ -76,19 +89,22 @@ function Gestao() {
   const pendentes = useMemo(() => {
     const obrasComGestao = new Set(gestoes.map((g) => g.obraId));
     const idsComGestao = new Set(gestoes.map((g) => g.orcamentoId));
-    return aprovados.filter((o) => !idsComGestao.has(o.id) && !obrasComGestao.has(getObraId(o)));
+    // somente orçamentos base iniciam uma gestão; aditivos entram dentro da gestão da base
+    return aprovados.filter((o) => !isAditivo(o) && !idsComGestao.has(o.id) && !obrasComGestao.has(getObraId(o)));
   }, [aprovados, gestoes]);
 
   const totalGeral = useMemo(
     () =>
       linhasGestao.reduce(
-        (t, { resumo }) => ({
+        (t, { resumo, resumoBase, resumoAditivos }) => ({
           verba: t.verba + resumo.verbaAtual,
+          base: t.base + resumoBase.verbaAtual,
+          aditivos: t.aditivos + resumoAditivos.verbaAtual,
           comprado: t.comprado + resumo.comprado,
           estouro: t.estouro + resumo.estouro,
           economia: t.economia + resumo.economia
         }),
-        { verba: 0, comprado: 0, estouro: 0, economia: 0 }
+        { verba: 0, base: 0, aditivos: 0, comprado: 0, estouro: 0, economia: 0 }
       ),
     [linhasGestao]
   );
@@ -106,6 +122,37 @@ function Gestao() {
       console.error(err);
       setError('Erro ao iniciar a gestão: ' + err.message);
       setIniciando('');
+    }
+  }
+
+  async function handleExcluir(g) {
+    const nCompras = compras.filter((c) => c.gestaoId === g.id).length;
+    const nAjustes = ajustes.filter((a) => a.gestaoId === g.id).length;
+    const nAditivos = (g.aditivos || []).length;
+    const detalhes = [
+      nCompras && `${nCompras} compra(s)`,
+      nAjustes && `${nAjustes} ajuste(s) de verba`,
+      nAditivos && `${nAditivos} aditivo(s) incluído(s)`
+    ].filter(Boolean);
+    const ok = window.confirm(
+      `Excluir "${g.nome}" da gestão?
+
+` +
+        (detalhes.length ? `Serão apagados também: ${detalhes.join(', ')}.
+` : '') +
+        'Esta ação não pode ser desfeita. O orçamento não é alterado e poderá ter a gestão iniciada de novo.'
+    );
+    if (!ok) return;
+    setExcluindo(g.id);
+    setError('');
+    try {
+      await excluirGestao(empresaId, g.id);
+      await carregar();
+    } catch (err) {
+      console.error(err);
+      setError('Erro ao excluir a gestão: ' + err.message);
+    } finally {
+      setExcluindo('');
     }
   }
 
@@ -137,6 +184,9 @@ function Gestao() {
             <Card body>
               <div className="kpi-label">Verba total</div>
               <div className="kpi-value">{formatCurrency(totalGeral.verba)}</div>
+              <div className="small text-muted">
+                Base {formatCurrency(totalGeral.base)} · Aditivos {formatCurrency(totalGeral.aditivos)}
+              </div>
             </Card>
           </Col>
           <Col md={3} sm={6}>
@@ -213,7 +263,9 @@ function Gestao() {
                 <tr>
                   <th>Obra</th>
                   <th>Rev.</th>
-                  <th className="text-end">Verba</th>
+                  <th className="text-end">Verba base</th>
+                  <th className="text-end">Verba aditivos</th>
+                  <th className="text-end">Verba total</th>
                   <th className="text-end">Comprado</th>
                   <th className="text-end">Saldo</th>
                   <th style={{ minWidth: 140 }}>Consumo</th>
@@ -222,7 +274,7 @@ function Gestao() {
                 </tr>
               </thead>
               <tbody>
-                {linhasGestao.map(({ gestao, resumo, novaRevisao }) => {
+                {linhasGestao.map(({ gestao, resumo, resumoBase, resumoAditivos, novaRevisao, aditivosPendentes }) => {
                   const pct = resumo.verbaAtual > 0 ? (resumo.comprado / resumo.verbaAtual) * 100 : 0;
                   return (
                     <tr key={gestao.id}>
@@ -238,7 +290,18 @@ function Gestao() {
                           </Badge>
                         )}
                       </td>
-                      <td className="text-end">{formatCurrency(resumo.verbaAtual)}</td>
+                      <td className="text-end">{formatCurrency(resumoBase.verbaAtual)}</td>
+                      <td className="text-end">
+                        {(gestao.aditivos || []).length > 0 ? (
+                          <>
+                            {formatCurrency(resumoAditivos.verbaAtual)}
+                            <div className="small text-muted">
+                              {gestao.aditivos.length} aditivo{gestao.aditivos.length > 1 ? 's' : ''}
+                            </div>
+                          </>
+                        ) : <span className="text-muted">—</span>}
+                      </td>
+                      <td className="text-end fw-semibold">{formatCurrency(resumo.verbaAtual)}</td>
                       <td className="text-end">{formatCurrency(resumo.comprado)}</td>
                       <td className={`text-end ${resumo.verbaAtual - resumo.comprado < 0 ? 'text-danger' : ''}`}>
                         {formatCurrency(resumo.verbaAtual - resumo.comprado)}
@@ -260,13 +323,33 @@ function Gestao() {
                         {resumo.itensAtencao > 0 && (
                           <Badge bg="warning" text="dark">{resumo.itensAtencao} atenção</Badge>
                         )}
-                        {resumo.itensEstouro === 0 && resumo.itensAtencao === 0 && <span className="text-muted small">—</span>}
+                        {aditivosPendentes > 0 && (
+                          <Badge bg="info" className="ms-1" title="Aditivos aprovados ainda não incluídos na gestão">
+                            {aditivosPendentes} aditivo{aditivosPendentes > 1 ? 's' : ''} p/ incluir
+                          </Badge>
+                        )}
+                        {resumo.itensEstouro === 0 && resumo.itensAtencao === 0 && aditivosPendentes === 0 && <span className="text-muted small">—</span>}
                       </td>
-                      <td className="text-end">
+                      <td className="text-end text-nowrap">
                         <Button size="sm" variant="outline-primary" onClick={() => navigate(`/gestao/${gestao.id}`)}>
                           <FaEye className="me-1" />
                           Abrir
                         </Button>
+                        {podeEditar && (
+                          <span className="ms-1">
+                            <MenuAcoes
+                              acoes={[
+                                {
+                                  label: excluindo === gestao.id ? 'Excluindo...' : 'Excluir da gestão',
+                                  icon: <FaTrash />,
+                                  perigo: true,
+                                  disabled: !!excluindo,
+                                  onClick: () => handleExcluir(gestao)
+                                }
+                              ]}
+                            />
+                          </span>
+                        )}
                       </td>
                     </tr>
                   );
