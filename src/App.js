@@ -17,6 +17,8 @@ import Orcamentos from './components/Orcamentos';
 import OrcamentoEAP from './components/OrcamentoEAP';
 import CurvaABC from './components/CurvaABC';
 import Comparativo from './components/Comparativo';
+import Gestao from './components/gestao/Gestao';
+import GestaoObra from './components/gestao/GestaoObra';
 import Login from './components/Login';
 import SelecaoEmpresa from './components/SelecaoEmpresa';
 import AdminUsuarios from './components/AdminUsuarios';
@@ -115,6 +117,20 @@ function App() {
                 <PrivateRoute>
                   <AppShell>
                     <Comparativo />
+                  </AppShell>
+                </PrivateRoute>
+              } />
+              <Route path="/gestao" element={
+                <PrivateRoute>
+                  <AppShell>
+                    <Gestao />
+                  </AppShell>
+                </PrivateRoute>
+              } />
+              <Route path="/gestao/:id" element={
+                <PrivateRoute>
+                  <AppShell>
+                    <GestaoObra />
                   </AppShell>
                 </PrivateRoute>
               } />

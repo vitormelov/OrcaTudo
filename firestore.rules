@@ -161,6 +161,34 @@ service cloud.firestore {
       allow update, delete: if canWriteTenant(resource.data);
     }
 
+    // Módulo de Gestão (orçamentos aprovados: verbas, compras e ajustes)
+    match /gestaoObras/{gestaoId} {
+      allow create: if isColaborador(request.resource.data.empresaId)
+        && request.resource.data.userId == request.auth.uid;
+      allow read: if isMember(resource.data.empresaId);
+      allow update: if isColaborador(resource.data.empresaId)
+        && request.resource.data.empresaId == resource.data.empresaId;
+      allow delete: if isColaborador(resource.data.empresaId);
+    }
+
+    match /gestaoCompras/{compraId} {
+      allow create: if isColaborador(request.resource.data.empresaId)
+        && request.resource.data.userId == request.auth.uid;
+      allow read: if isMember(resource.data.empresaId);
+      allow update: if isColaborador(resource.data.empresaId)
+        && request.resource.data.empresaId == resource.data.empresaId;
+      allow delete: if isColaborador(resource.data.empresaId);
+    }
+
+    match /gestaoAjustes/{ajusteId} {
+      allow create: if isColaborador(request.resource.data.empresaId)
+        && request.resource.data.userId == request.auth.uid;
+      allow read: if isMember(resource.data.empresaId);
+      allow update: if isColaborador(resource.data.empresaId)
+        && request.resource.data.empresaId == resource.data.empresaId;
+      allow delete: if isColaborador(resource.data.empresaId);
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

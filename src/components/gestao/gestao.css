@@ -1,0 +1,150 @@
+/* Tabelas do módulo de Gestão — mesmo visual da planilha da EAP */
+.gestao-tabela-wrap {
+  overflow-x: auto;
+}
+
+.gestao-tabela {
+  width: 100%;
+  margin: 0;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.gestao-tabela.fixa {
+  table-layout: fixed;
+  min-width: 1080px;
+}
+
+.gestao-tabela.largura-itens {
+  min-width: 1080px;
+}
+
+/* Tudo em uma linha; só a descrição (.desc) pode quebrar */
+.gestao-tabela th,
+.gestao-tabela td {
+  padding: 6px 4px;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--color-border, #dde3e8);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gestao-tabela td.desc {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.gestao-tabela .dropdown-menu {
+  white-space: nowrap;
+}
+
+.gestao-tabela thead th {
+  background: var(--color-primary, #17324D);
+  color: #fff;
+  font-weight: 500;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.gestao-tabela .num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.gestao-tabela .centro {
+  text-align: center;
+}
+
+/* Níveis da EAP */
+.gestao-tabela tr.gt-pacote td {
+  background: #e8eef3;
+  font-weight: 700;
+}
+
+.gestao-tabela tr.gt-grupo td,
+.gestao-tabela tr.gt-subgrupo td {
+  background: var(--color-background, #f5f7f9);
+  font-weight: 600;
+}
+
+.gestao-tabela tr.gt-item td {
+  background: #fff;
+}
+
+.gestao-tabela tr.gt-item:hover td {
+  background: #f8fafc;
+}
+
+.gestao-tabela tr.gt-detalhe td {
+  background: #fbfcfd;
+  color: var(--color-text-secondary, #687481);
+  font-size: 11px;
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+
+.gestao-tabela .gt-total-pacote {
+  color: var(--color-primary, #17324D);
+}
+
+.gestao-tabela tfoot td {
+  border-top: 2px solid var(--color-primary, #17324D);
+  font-weight: 700;
+  background: #fff;
+}
+
+.gestao-toggle {
+  padding: 0;
+  line-height: 1;
+  font-size: 11px;
+  color: var(--color-primary, #17324D);
+}
+
+.gestao-consumo {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gestao-consumo .progress {
+  flex: 1;
+  height: 6px;
+}
+
+.gestao-consumo span {
+  width: 36px;
+  text-align: right;
+  font-size: 11px;
+  color: var(--color-text-secondary, #687481);
+}
+
+.gestao-acoes-btn {
+  padding: 2px 8px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.gestao-menu-acoes {
+  max-width: none;
+  font-size: 13px;
+}
+
+.gestao-menu-acoes .dropdown-item {
+  padding: 6px 10px;
+}
+
+.gestao-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--color-border, #dde3e8);
+}

@@ -5,7 +5,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { useEmpresa } from '../contexts/EmpresaContext';
 import {
   FaHome, FaBoxes, FaLayerGroup, FaFileInvoiceDollar,
-  FaBalanceScale, FaUser, FaSignOutAlt, FaBuilding, FaUsersCog, FaBookOpen
+  FaBalanceScale, FaUser, FaSignOutAlt, FaBuilding, FaUsersCog, FaBookOpen,
+  FaClipboardCheck
 } from 'react-icons/fa';
 import Logo from './Logo';
 import { diasTrialRestantes, isContaTrial, isTrialExpirado } from '../utils/trial';
@@ -67,6 +68,10 @@ function NavigationBar() {
               <Nav.Link as={Link} to="/comparativo" className="d-flex align-items-center">
                 <FaBalanceScale className="me-1" />
                 Comparativo
+              </Nav.Link>
+              <Nav.Link as={Link} to="/gestao" className="d-flex align-items-center">
+                <FaClipboardCheck className="me-1" />
+                Gestão
               </Nav.Link>
             </Nav>
           )}
